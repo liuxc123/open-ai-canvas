@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"log"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -1283,6 +1284,10 @@ func runNewAPIChannel2VideoTask(ctx context.Context, input canvasGenerationInput
 		if err != nil {
 			return nil, err
 		}
+		if jsonBytes, marshalErr := json.Marshal(body); marshalErr == nil {
+			log.Printf("[DEBUG] NewAPI Video Generations 任务创建请求：%s", string(jsonBytes))
+		}
+		return nil, errors.New("[DEBUG] NewAPI Video Generations 任务测试拦截")
 		if err := postJSON(ctx, input.Config, "/video/generations", body, &created); err != nil {
 			return nil, err
 		}
