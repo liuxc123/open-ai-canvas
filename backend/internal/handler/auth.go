@@ -480,6 +480,23 @@ func RegisterAdminRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"setting": setting})
 	})
+	r.POST("/admin/settings/oss/test", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var req service.OSSSettingRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if err := svc.TestAdminOSSSetting(user, req); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"ok": true})
+	})
 	r.GET("/admin/settings/drawing-engine", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

@@ -85,13 +85,13 @@ func (s *Service) UpdateOSSSetting(actor *model.User, req OSSSettingRequest) (*P
 	if err != nil {
 		return nil, err
 	}
-	if !next.Enabled {
-		if next.PublicBaseURL == "" {
-			return nil, BadAuthRequest("服务器本地存储需要填写服务器访问地址")
-		}
+	if next.PublicBaseURL != "" {
 		if _, err := validatePublicResourceBaseURL(next.PublicBaseURL); err != nil {
-			return nil, fmt.Errorf("服务器访问地址无效：%w", err)
+			return nil, fmt.Errorf("公共访问地址无效：%w", err)
 		}
+	}
+	if !next.Enabled && next.PublicBaseURL == "" {
+		return nil, BadAuthRequest("服务器本地存储需要填写服务器访问地址")
 	}
 	stored := next
 	stored.AccessKeySecret, err = s.encryptSettingSecret(next.AccessKeySecret)
@@ -157,6 +157,56 @@ func (s *Service) UpdateUserOSSSetting(actor *model.User, req OSSSettingRequest)
 	}
 	public := publicUserOSSSetting(&setting, next)
 	return &public, nil
+}
+
+func (s *Service) TestAdminOSSSetting(actor *model.User, req OSSSettingRequest) error {
+	if err := s.RequireAdmin(actor); err != nil {
+		return err
+	}
+	_, current, err := s.readOSSSetting()
+	if err != nil {
+		return err
+	}
+	return s.testOSSSetting(req, current)
+}
+
+func (s *Service) TestUserOSSSetting(actor *model.User, req OSSSettingRequest) error {
+	if actor == nil {
+		return Unauthorized("请先登录")
+	}
+	_, current, err := s.readUserOSSSetting(actor.ID)
+	if err != nil {
+		return err
+	}
+	return s.testOSSSetting(req, current)
+}
+
+func (s *Service) testOSSSetting(req OSSSettingRequest, current ossSettingValue) error {
+	setting, err := ossSettingFromRequest(req, current)
+	if err != nil {
+		return err
+	}
+	if err := validateProviderFields(setting); err != nil {
+		return err
+	}
+	testContent := "infinite-canvas-oss-test"
+	testKey := strings.Trim(strings.Join(nonEmptySegments([]string{setting.PathPrefix, ".oss-test", newID() + ".txt"}), "/"), "/")
+	if _, err := putOSSObject(setting, testKey, "text/plain", int64(len(testContent)), strings.NewReader(testContent)); err != nil {
+		return fmt.Errorf("上传测试文件失败：%w", err)
+	}
+	stream, err := getOSSObjectRange(setting, testKey, "")
+	if err != nil {
+		return fmt.Errorf("读取测试文件失败：%w", err)
+	}
+	defer stream.body.Close()
+	readData, err := io.ReadAll(io.LimitReader(stream.body, 1024))
+	if err != nil {
+		return fmt.Errorf("读取测试文件内容失败：%w", err)
+	}
+	if string(readData) != testContent {
+		return fmt.Errorf("测试文件内容不匹配，写入与读取不一致")
+	}
+	return nil
 }
 
 func (s *Service) readOSSSetting() (*model.SystemSetting, ossSettingValue, error) {
@@ -411,30 +461,48 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 	if next.Provider == "" {
 		next.Provider = "aliyun"
 	}
-	if next.Provider != "aliyun" {
-		return next, BadAuthRequest("暂时只支持阿里云 OSS")
-	}
 	if next.AccessKeySecret == "" {
 		next.AccessKeySecret = current.AccessKeySecret
 	}
 	if next.Enabled {
-		if next.Bucket == "" {
-			return next, BadAuthRequest("请填写 OSS Bucket")
-		}
-		if next.Endpoint == "" {
-			return next, BadAuthRequest("请填写 OSS Endpoint")
-		}
-		if _, err := ValidateOutboundURL(next.Endpoint); err != nil {
+		if err := validateProviderFields(next); err != nil {
 			return next, err
-		}
-		if next.AccessKeyID == "" {
-			return next, BadAuthRequest("请填写 AccessKey ID")
-		}
-		if next.AccessKeySecret == "" {
-			return next, BadAuthRequest("请填写 AccessKey Secret")
 		}
 	}
 	return next, nil
+}
+
+func validateProviderFields(value ossSettingValue) error {
+	allowed := map[string]bool{"aliyun": true, "tencent": true, "s3": true}
+	if !allowed[value.Provider] {
+		return BadAuthRequest("不支持的存储服务，请选择阿里云 OSS、腾讯云 COS 或 Amazon S3")
+	}
+	if value.Bucket == "" {
+		return BadAuthRequest("请填写 Bucket")
+	}
+	if value.AccessKeyID == "" {
+		return BadAuthRequest("请填写 AccessKey ID")
+	}
+	if value.AccessKeySecret == "" {
+		return BadAuthRequest("请填写 AccessKey Secret")
+	}
+	switch value.Provider {
+	case "aliyun":
+		if value.Endpoint == "" {
+			return BadAuthRequest("请填写 OSS Endpoint")
+		}
+	case "tencent", "s3":
+		if value.Region == "" {
+			return BadAuthRequest("请填写 Region")
+		}
+		if value.Endpoint == "" {
+			return BadAuthRequest("请填写 Endpoint")
+		}
+	}
+	if _, err := ValidateOutboundURL(value.Endpoint); err != nil {
+		return err
+	}
+	return nil
 }
 
 func normalizeOSSSetting(value ossSettingValue) ossSettingValue {

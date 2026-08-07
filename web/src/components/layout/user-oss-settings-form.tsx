@@ -1,19 +1,26 @@
 import { App, Button, Form, Input, Select, Switch, Tag } from "antd";
-import { Cloud, ShieldCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Cloud, ShieldCheck, Zap } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
-import { getUserOSSSetting, updateUserOSSSetting, type UserOSSSetting } from "@/services/api/resources";
+import { getUserOSSSetting, testUserOSSSetting, updateUserOSSSetting, type StorageProvider, type UserOSSSetting } from "@/services/api/resources";
 import { useUserStore } from "@/stores/use-user-store";
+
+const providerPlaceholders: Record<StorageProvider, { region: string; endpoint: string; accessKeyId: string; accessKeySecret: string }> = {
+    aliyun: { region: "oss-cn-hangzhou", endpoint: "https://oss-cn-hangzhou.aliyuncs.com", accessKeyId: "阿里云 AccessKey ID", accessKeySecret: "阿里云 AccessKey Secret" },
+    tencent: { region: "ap-guangzhou", endpoint: "https://cos.ap-guangzhou.myqcloud.com", accessKeyId: "腾讯云 SecretId", accessKeySecret: "腾讯云 SecretKey" },
+    s3: { region: "us-east-1", endpoint: "https://s3.us-east-1.amazonaws.com", accessKeyId: "AWS Access Key ID", accessKeySecret: "AWS Secret Access Key" },
+};
 
 type OSSFormValues = {
     enabled?: boolean;
-    provider: "aliyun";
+    provider: StorageProvider;
     region?: string;
     endpoint?: string;
     bucket?: string;
     accessKeyId?: string;
     accessKeySecret?: string;
     pathPrefix?: string;
+    publicBaseUrl?: string;
 };
 
 export function UserOSSSettingsForm() {
@@ -23,7 +30,31 @@ export function UserOSSSettingsForm() {
     const [setting, setSetting] = useState<UserOSSSetting | null>(null);
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [testing, setTesting] = useState(false);
     const savedAt = formatSavedAt(setting?.updatedAt);
+    const provider = Form.useWatch("provider", form) || "aliyun";
+    const ph = providerPlaceholders[provider] || providerPlaceholders.aliyun;
+    const prevProviderRef = useRef<StorageProvider>(provider);
+    const cloudDraftsRef = useRef<Partial<Record<StorageProvider, Partial<OSSFormValues>>>>({});
+    const hasSavedSecret = setting?.enabled && setting.provider === provider && setting.hasAccessKeySecret;
+
+    useEffect(() => {
+        if (prevProviderRef.current && prevProviderRef.current !== provider) {
+            const all = form.getFieldsValue(true);
+            cloudDraftsRef.current[prevProviderRef.current] = {
+                region: all.region, endpoint: all.endpoint, bucket: all.bucket,
+                accessKeyId: all.accessKeyId, accessKeySecret: all.accessKeySecret,
+                pathPrefix: all.pathPrefix, publicBaseUrl: all.publicBaseUrl,
+            };
+            const cached = cloudDraftsRef.current[provider];
+            form.setFieldsValue({
+                region: "", endpoint: "", bucket: "", accessKeyId: "",
+                accessKeySecret: "", pathPrefix: "", publicBaseUrl: "",
+                ...cached,
+            });
+        }
+        prevProviderRef.current = provider;
+    }, [provider, form]);
 
     useEffect(() => {
         if (!actor?.id) return;
@@ -46,6 +77,29 @@ export function UserOSSSettingsForm() {
         return <div className="rounded-md border border-dashed border-border px-5 py-10 text-center text-sm text-foreground/55">登录后可配置个人 OSS。</div>;
     }
 
+    const test = async () => {
+        const values = await form.validateFields();
+        setTesting(true);
+        try {
+            await testUserOSSSetting({
+                enabled: true,
+                provider: values.provider || "aliyun",
+                region: values.region?.trim() || "",
+                endpoint: values.endpoint?.trim() || "",
+                bucket: values.bucket?.trim() || "",
+                accessKeyId: values.accessKeyId?.trim() || "",
+                accessKeySecret: values.accessKeySecret?.trim() || "",
+                pathPrefix: values.pathPrefix?.trim() || "",
+                publicBaseUrl: values.publicBaseUrl?.trim() || "",
+            });
+            message.success("连接测试成功，存储配置可用");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "连接测试失败");
+        } finally {
+            setTesting(false);
+        }
+    };
+
     const save = async () => {
         const values = await form.validateFields();
         setSaving(true);
@@ -59,6 +113,7 @@ export function UserOSSSettingsForm() {
                 accessKeyId: values.accessKeyId?.trim() || "",
                 accessKeySecret: values.accessKeySecret?.trim() || "",
                 pathPrefix: values.pathPrefix?.trim() || "",
+                publicBaseUrl: values.publicBaseUrl?.trim() || "",
             });
             setSetting(data.setting);
             form.setFieldsValue(toFormValues(data.setting));
@@ -93,13 +148,17 @@ export function UserOSSSettingsForm() {
                     <Switch checkedChildren="启用" unCheckedChildren="停用" />
                 </Form.Item>
                 <Form.Item name="provider" label="存储服务" rules={[{ required: true, message: "请选择存储服务" }]} className="mb-3">
-                    <Select options={[{ label: "阿里云 OSS", value: "aliyun" }]} />
+                    <Select options={[
+                        { label: "阿里云 OSS", value: "aliyun" },
+                        { label: "腾讯云 COS", value: "tencent" },
+                        { label: "Amazon S3", value: "s3" },
+                    ]} />
                 </Form.Item>
                 <Form.Item name="region" label="Region" className="mb-3">
-                    <Input spellCheck={false} placeholder="oss-cn-hangzhou" />
+                    <Input spellCheck={false} placeholder={ph.region} />
                 </Form.Item>
                 <Form.Item name="endpoint" label="Endpoint" className="mb-3">
-                    <Input inputMode="url" spellCheck={false} placeholder="https://oss-cn-hangzhou.aliyuncs.com" />
+                    <Input inputMode="url" spellCheck={false} placeholder={ph.endpoint} />
                 </Form.Item>
                 <Form.Item name="bucket" label="Bucket" className="mb-3">
                     <Input spellCheck={false} placeholder="my-canvas-assets" />
@@ -107,19 +166,27 @@ export function UserOSSSettingsForm() {
                 <Form.Item name="pathPrefix" label="路径前缀" className="mb-3">
                     <Input spellCheck={false} placeholder="infinite-canvas" />
                 </Form.Item>
-                <Form.Item name="accessKeyId" label="AccessKey ID" className="mb-3 xl:col-span-1">
-                    <Input autoComplete="off" spellCheck={false} placeholder="阿里云 AccessKey ID" />
+                <Form.Item name="accessKeyId" label="AccessKey ID" className="mb-3">
+                    <Input autoComplete="off" spellCheck={false} placeholder={ph.accessKeyId} />
                 </Form.Item>
-                <Form.Item name="accessKeySecret" label={setting?.hasAccessKeySecret ? "AccessKey Secret（留空保留）" : "AccessKey Secret"} className="mb-3 xl:col-span-2">
-                    <Input.Password autoComplete="new-password" spellCheck={false} placeholder={setting?.hasAccessKeySecret ? "留空保留已加密密钥" : "阿里云 AccessKey Secret"} />
+                <Form.Item name="accessKeySecret" label={hasSavedSecret ? "AccessKey Secret（留空保留）" : "AccessKey Secret"} className="mb-3">
+                    <Input.Password autoComplete="new-password" spellCheck={false} placeholder={hasSavedSecret ? "留空保留已加密密钥" : ph.accessKeySecret} />
+                </Form.Item>
+                <Form.Item className="mb-3" name="publicBaseUrl" label="公共访问域名（选填）" tooltip="配置 CDN 或自定义域名后，预签名下载链接将使用此地址，不再拼接 bucket.endpoint。留空则使用 Endpoint 自动构造。">
+                    <Input spellCheck={false} placeholder="https://cdn.example.com" />
                 </Form.Item>
             </div>
 
             <div className="mt-2 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
                 <span className="text-xs text-foreground/50">{savedAt ? `上次保存：${savedAt}` : "尚未保存个人 OSS 配置"}</span>
-                <Button type="primary" loading={saving} onClick={() => void save()}>
-                    保存个人 OSS
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Button icon={<Zap className="size-4" />} loading={testing} onClick={() => void test()}>
+                        测试连接
+                    </Button>
+                    <Button type="primary" loading={saving} onClick={() => void save()}>
+                        保存个人 OSS
+                    </Button>
+                </div>
             </div>
         </Form>
     );
@@ -142,5 +209,6 @@ function toFormValues(setting: UserOSSSetting): OSSFormValues {
         accessKeyId: setting.accessKeyId,
         accessKeySecret: "",
         pathPrefix: setting.pathPrefix,
+        publicBaseUrl: setting.publicBaseUrl,
     };
 }

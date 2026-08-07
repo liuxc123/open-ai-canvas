@@ -92,6 +92,24 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"setting": setting})
 	})
+	r.POST("/settings/oss/test", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+		var req service.OSSSettingRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if err := svc.TestUserOSSSetting(user, req); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"ok": true})
+	})
 	r.GET("/resources", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

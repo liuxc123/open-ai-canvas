@@ -3,6 +3,7 @@ import type { CreditLedgerEntry } from "@/services/api/wallet";
 import type { GenerationTask, TaskStatus } from "@/services/api/task-center";
 import type { CanvasDrawingEngineSetting } from "@/lib/canvas/canvas-drawing-engine";
 import type { FeatureAvailability } from "@/stores/use-user-store";
+import type { StorageProvider } from "@/services/api/resources";
 import { apiClient, request } from "@/services/api/request";
 
 const api = apiClient;
@@ -249,7 +250,7 @@ export type UserPromptPreference = {
 
 export type AdminOSSSetting = {
     enabled: boolean;
-    provider: "aliyun";
+    provider: StorageProvider;
     region: string;
     endpoint: string;
     bucket: string;
@@ -462,6 +463,10 @@ export function getAdminOSSSetting() {
 
 export function updateAdminOSSSetting(input: Partial<AdminOSSSetting>) {
     return request<{ setting: AdminOSSSetting }>(api.patch("/admin/settings/oss", input));
+}
+
+export function testAdminOSSSetting(input: Partial<AdminOSSSetting>) {
+    return request<{ ok: boolean }>(api.post("/admin/settings/oss/test", input));
 }
 
 export function getAdminRuntimePolicySetting() {

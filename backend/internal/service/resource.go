@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -651,10 +653,7 @@ func validateActiveOSSSetting(setting ossSettingValue, disabledMessage string, i
 	if !setting.Enabled {
 		return ossSettingValue{}, BadAuthRequest(disabledMessage)
 	}
-	if setting.Provider != "aliyun" {
-		return ossSettingValue{}, BadAuthRequest("暂时只支持阿里云 OSS")
-	}
-	if setting.Bucket == "" || setting.Endpoint == "" || setting.AccessKeyID == "" || setting.AccessKeySecret == "" {
+	if err := validateProviderFields(setting); err != nil {
 		return ossSettingValue{}, BadAuthRequest(incompleteMessage)
 	}
 	return setting, nil
@@ -686,6 +685,9 @@ func ossObjectKey(setting ossSettingValue, userID string, kind string, fileName 
 }
 
 func putOSSObject(setting ossSettingValue, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
+	if setting.Provider == "tencent" || setting.Provider == "s3" {
+		return putS3Object(setting, objectKey, mimeType, size, body)
+	}
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
@@ -717,6 +719,9 @@ type ossObjectStream struct {
 }
 
 func getOSSObjectRange(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
+	if setting.Provider == "tencent" || setting.Provider == "s3" {
+		return getS3ObjectRange(setting, objectKey, rangeHeader)
+	}
 	req, err := newOSSRequest(http.MethodGet, setting, objectKey, "", nil)
 	if err != nil {
 		return nil, err
@@ -758,6 +763,9 @@ func decimalDigits(value string) bool {
 }
 
 func signedOSSObjectURL(setting ossSettingValue, objectKey string, expiresAt time.Time) (string, error) {
+	if setting.Provider == "tencent" || setting.Provider == "s3" {
+		return signedS3URL(setting, objectKey, expiresAt)
+	}
 	baseURL, err := ossBucketBaseURL(setting)
 	if err != nil {
 		return "", err
@@ -806,6 +814,13 @@ func newOSSRequest(method string, setting ossSettingValue, objectKey string, con
 }
 
 func ossBucketBaseURL(setting ossSettingValue) (*url.URL, error) {
+	if setting.PublicBaseURL != "" {
+		parsed, err := url.Parse(setting.PublicBaseURL)
+		if err != nil || parsed.Host == "" {
+			return nil, errors.New("公共访问域名格式不正确")
+		}
+		return parsed, nil
+	}
 	endpoint := strings.TrimRight(setting.Endpoint, "/")
 	if endpoint == "" {
 		return nil, errors.New("OSS Endpoint 为空")
@@ -863,4 +878,208 @@ func nonEmptySegments(values []string) []string {
 		}
 	}
 	return result
+}
+
+func putS3Object(setting ossSettingValue, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	req, err := newS3Request(http.MethodPut, setting, objectKey, mimeType, body)
+	if err != nil {
+		return "", err
+	}
+	if size > 0 {
+		req.ContentLength = size
+	}
+	resp, err := OutboundHTTPClient(2 * time.Minute).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("S3 上传失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
+	}
+	return strings.Trim(resp.Header.Get("ETag"), `"`), nil
+}
+
+func getS3ObjectRange(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
+	req, err := newS3Request(http.MethodGet, setting, objectKey, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+	resp, err := OutboundHTTPClient(2 * time.Minute).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if (resp.StatusCode < 200 || resp.StatusCode >= 300) && resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		defer resp.Body.Close()
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("S3 读取失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
+	}
+	return &ossObjectStream{body: resp.Body, statusCode: resp.StatusCode, contentLength: resp.ContentLength, contentRange: resp.Header.Get("Content-Range"), acceptRanges: firstNonEmpty(resp.Header.Get("Accept-Ranges"), "bytes")}, nil
+}
+
+func signedS3URL(setting ossSettingValue, objectKey string, expiresAt time.Time) (string, error) {
+	baseURL, err := ossBucketBaseURL(setting)
+	if err != nil {
+		return "", err
+	}
+	if setting.AccessKeyID == "" || setting.AccessKeySecret == "" {
+		return "", errors.New("S3 访问密钥不可用")
+	}
+	objectKey = strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if objectKey == "" {
+		return "", errors.New("S3 对象路径为空")
+	}
+	baseURL.Path = strings.TrimRight(baseURL.Path, "/") + "/" + escapeObjectKey(objectKey)
+
+	now := time.Now().UTC()
+	dateTime := now.Format("20060102T150405Z")
+	date := now.Format("20060102")
+	expires := int(time.Until(expiresAt).Seconds())
+	if expires < 1 {
+		expires = 300
+	}
+	scope := date + "/" + setting.Region + "/s3/aws4_request"
+
+	query := baseURL.Query()
+	query.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	query.Set("X-Amz-Credential", setting.AccessKeyID+"/"+scope)
+	query.Set("X-Amz-Date", dateTime)
+	query.Set("X-Amz-Expires", strconv.Itoa(expires))
+	query.Set("X-Amz-SignedHeaders", "host")
+
+	canonicalRequest := strings.Join([]string{
+		http.MethodGet,
+		baseURL.EscapedPath(),
+		s3CanonicalQueryString(query),
+		"host:" + baseURL.Host + "\n",
+		"",
+		"host",
+		"UNSIGNED-PAYLOAD",
+	}, "\n")
+
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		dateTime,
+		scope,
+		sha256Hex([]byte(canonicalRequest)),
+	}, "\n")
+
+	signature := s3Signature(setting.AccessKeySecret, setting.Region, date, stringToSign)
+	query.Set("X-Amz-Signature", signature)
+	baseURL.RawQuery = query.Encode()
+	return baseURL.String(), nil
+}
+
+func newS3Request(method string, setting ossSettingValue, objectKey string, contentType string, body io.Reader) (*http.Request, error) {
+	baseURL, err := ossBucketBaseURL(setting)
+	if err != nil {
+		return nil, err
+	}
+	baseURL.Path = strings.TrimRight(baseURL.Path, "/") + "/" + escapeObjectKey(objectKey)
+	req, err := http.NewRequest(method, baseURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	dateTime := now.Format("20060102T150405Z")
+	date := now.Format("20060102")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set("X-Amz-Date", dateTime)
+	req.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+
+	headers := map[string]string{"host": baseURL.Host}
+	if contentType != "" {
+		headers["content-type"] = contentType
+	}
+	headers["x-amz-content-sha256"] = "UNSIGNED-PAYLOAD"
+	headers["x-amz-date"] = dateTime
+
+	canonicalHeaders, signedHeaders := s3CanonicalHeaders(headers)
+	canonicalRequest := strings.Join([]string{
+		method,
+		baseURL.EscapedPath(),
+		"",
+		canonicalHeaders,
+		"",
+		signedHeaders,
+		"UNSIGNED-PAYLOAD",
+	}, "\n")
+
+	scope := date + "/" + setting.Region + "/s3/aws4_request"
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		dateTime,
+		scope,
+		sha256Hex([]byte(canonicalRequest)),
+	}, "\n")
+
+	signature := s3Signature(setting.AccessKeySecret, setting.Region, date, stringToSign)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+setting.AccessKeyID+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
+	return req, nil
+}
+
+func s3CanonicalHeaders(headers map[string]string) (canonical, signed string) {
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, strings.ToLower(k))
+	}
+	sort.Strings(keys)
+	var c, s strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			s.WriteByte(';')
+		}
+		c.WriteString(k)
+		c.WriteByte(':')
+		c.WriteString(strings.TrimSpace(headers[k]))
+		c.WriteByte('\n')
+		s.WriteString(k)
+	}
+	return c.String(), s.String()
+}
+
+func s3CanonicalQueryString(q url.Values) string {
+	keys := make([]string, 0, len(q))
+	for k := range q {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte('&')
+		}
+		b.WriteString(url.QueryEscape(k))
+		b.WriteByte('=')
+		b.WriteString(url.QueryEscape(q.Get(k)))
+	}
+	return b.String()
+}
+
+func s3Signature(secret, region, date, stringToSign string) string {
+	kDate := hmacSHA256Key([]byte("AWS4"+secret), date)
+	kRegion := hmacSHA256Key(kDate, region)
+	kService := hmacSHA256Key(kRegion, "s3")
+	kSigning := hmacSHA256Key(kService, "aws4_request")
+	return hex.EncodeToString(hmacSHA256Key(kSigning, stringToSign))
+}
+
+func hmacSHA256Key(key []byte, data string) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(data))
+	return mac.Sum(nil)
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
