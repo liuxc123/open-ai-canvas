@@ -387,7 +387,9 @@ const resolvedLegacyCanvasStylePresets = legacyCanvasStylePresets.map((preset) =
     if (!upgrade) return preset;
     const compiled = compileCanvasStylePreset(upgrade);
     const upgraded = { ...compiled, id: preset.id, imageUrl: preset.imageUrl };
-    return { ...upgraded, profile: createStyleProfileSnapshot({ ...compiled.profile!, presetId: preset.id }) };
+    // HMR 或缓存不一致时 compiled.profile 可能缺失，回退到 compiled 自身字段保证快照可创建
+    const profileSource = compiled.profile ?? { title: compiled.title, description: compiled.description, tags: compiled.tags, prompt: compiled.prompt };
+    return { ...upgraded, profile: createStyleProfileSnapshot({ ...profileSource, presetId: preset.id }) };
 });
 
 const resolvableCanvasStylePresets: CanvasStylePreset[] = [...recommendedCanvasStylePresets, ...resolvedLegacyCanvasStylePresets];
