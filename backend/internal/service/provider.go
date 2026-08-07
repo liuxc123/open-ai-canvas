@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"mime"
 	"mime/multipart"
@@ -19,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"log"
 
 	"infinite-canvas/backend/internal/model"
 
@@ -1489,24 +1489,20 @@ func findProviderMediaURL(value interface{}) string {
 }
 
 func newAPIVideoResultURL(state map[string]interface{}) string {
-	return nestedNewAPIVideoResultURL(state, false, 0)
+	return nestedNewAPIVideoResultURL(state, 0, 3)
 }
 
-func nestedNewAPIVideoResultURL(payload map[string]interface{}, allowResultURL bool, depth int) string {
-	if depth < 2 {
-		for _, key := range []string{"data", "result", "video"} {
+func nestedNewAPIVideoResultURL(payload map[string]interface{}, depth, maxDepth int) string {
+	if depth < maxDepth {
+		for _, key := range []string{"data", "result", "video", "metadata"} {
 			if nested, ok := payload[key].(map[string]interface{}); ok {
-				if videoURL := nestedNewAPIVideoResultURL(nested, true, depth+1); videoURL != "" {
+				if videoURL := nestedNewAPIVideoResultURL(nested, depth+1, maxDepth); videoURL != "" {
 					return videoURL
 				}
 			}
 		}
 	}
-	keys := []string{"video_url", "videoUrl", "url"}
-	if allowResultURL {
-		keys = append(keys, "result_url", "resultUrl")
-	}
-	for _, key := range keys {
+	for _, key := range []string{"video_url", "videoUrl", "url", "result_url", "resultUrl"} {
 		if videoURL := strings.TrimSpace(stringField(payload, key)); isPublicMediaURL(videoURL) {
 			return videoURL
 		}
@@ -1542,11 +1538,12 @@ func runNewAPIChannel2VideoTask(ctx context.Context, input canvasGenerationInput
 		if jsonBytes, marshalErr := json.Marshal(body); marshalErr == nil {
 			log.Printf("[DEBUG] NewAPI Video Generations 任务创建请求：%s", string(jsonBytes))
 		}
-		return nil, errors.New("[DEBUG] NewAPI Video Generations 任务测试拦截")
+		// return nil, errors.New("[DEBUG] NewAPI Video Generations 任务测试拦截")
 		if err := postJSON(ctx, input.Config, "/video/generations", body, &created); err != nil {
 			return nil, err
 		}
 		id = firstNonEmptyString(stringField(created, "task_id"), stringField(created, "id"))
+		log.Printf("[DEBUG] NewAPI Video Generations 任务创建响应：%v，提取任务 ID：%s", created, id)
 	}
 	if id == "" {
 		if data, ok := created["data"].(map[string]interface{}); ok {
@@ -1571,6 +1568,7 @@ func runNewAPIChannel2VideoTask(ctx context.Context, input canvasGenerationInput
 			}
 			continue
 		}
+		log.Printf("[DEBUG] NewAPI Video Generations 任务查询结果（任务 %s）：%v", id, result)
 		consecutiveQueryFailures = 0
 		if result != nil {
 			return result, nil
@@ -1596,9 +1594,11 @@ func queryNewAPIChannel2VideoTask(ctx context.Context, input canvasGenerationInp
 		state = data
 	}
 	status := strings.ToUpper(strings.TrimSpace(stringField(state, "status")))
+	log.Printf("[DEBUG] NewAPI Video Generations 任务状态（任务 %s）：%s，payload：%v", id, status, payload)
 	switch status {
-	case "SUCCESS":
-		videoURL := strings.TrimSpace(stringField(state, "result_url"))
+	case "SUCCESS", "SUCCEEDED":
+		videoURL := newAPIVideoResultURL(state)
+		log.Printf("[DEBUG] NewAPI Video Generations 视频地址（任务 %s）：%s", id, videoURL)
 		if videoURL == "" {
 			return nil, status, fmt.Errorf("NewAPI Video Generations 任务 %s 已成功但没有返回视频地址", id)
 		}
@@ -1699,6 +1699,7 @@ func newAPIChannel2VideoRequestBody(input canvasGenerationInput) (newAPIVideoReq
 		Model:       input.Config.Model,
 		Prompt:      strings.TrimSpace(input.Prompt),
 		Seconds:     strconv.Itoa(seconds),
+		Duration:    strconv.Itoa(seconds),
 		AspectRatio: ratio,
 		Resolution:  resolution,
 	}
@@ -1731,6 +1732,9 @@ func newAPIChannel2VideoRequestBody(input canvasGenerationInput) (newAPIVideoReq
 	if len(audioURLs) > 0 {
 		body.AudioURLs = audioURLs
 	}
+	if strings.Contains(modelName, "seedance") {
+		body.Metadata = newAPIChannel2VideoMetadata(body, images, videoURLs, audioURLs, ratio, resolution)
+	}
 	return body, nil
 }
 
@@ -1741,6 +1745,40 @@ func newAPIChannel2VideoBody(input canvasGenerationInput) (map[string]interface{
 		return nil, err
 	}
 	return requestAsMap(body)
+}
+
+func newAPIChannel2VideoMetadata(body newAPIVideoRequest, images, videoURLs, audioURLs []string, ratio, resolution string) *newAPIVideoRequestMetadata {
+	content := make([]map[string]interface{}, 0, 1+len(images)+len(videoURLs)+len(audioURLs))
+	if body.Prompt != "" {
+		content = append(content, map[string]interface{}{"type": "text", "text": body.Prompt})
+	}
+	for _, url := range images {
+		content = append(content, map[string]interface{}{
+			"type":      "image_url",
+			"image_url": map[string]interface{}{"url": url},
+			"role":      "reference_image",
+		})
+	}
+	for _, url := range videoURLs {
+		content = append(content, map[string]interface{}{
+			"type":      "video_url",
+			"video_url": map[string]interface{}{"url": url},
+			"role":      "reference_video",
+		})
+	}
+	for _, url := range audioURLs {
+		content = append(content, map[string]interface{}{
+			"type":      "audio_url",
+			"audio_url": map[string]interface{}{"url": url},
+			"role":      "reference_audio",
+		})
+	}
+	return &newAPIVideoRequestMetadata{
+		Content:       content,
+		Ratio:         ratio,
+		Resolution:    resolution,
+		GenerateAudio: body.GenerateAudio,
+	}
 }
 
 func videoGenerationsMediaURL(media providerMedia) (string, error) {

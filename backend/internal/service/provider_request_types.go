@@ -15,15 +15,24 @@ func requestAsMap(value interface{}) (map[string]interface{}, error) {
 }
 
 type newAPIVideoRequest struct {
-	Model         string   `json:"model"`
-	Prompt        string   `json:"prompt"`
-	Seconds       string   `json:"seconds"`
-	AspectRatio   string   `json:"aspect_ratio"`
-	Resolution    string   `json:"resolution"`
-	GenerateAudio *bool    `json:"generate_audio,omitempty"`
-	ImageURLs     []string `json:"image_urls,omitempty"`
-	VideoURLs     []string `json:"video_urls,omitempty"`
-	AudioURLs     []string `json:"audio_urls,omitempty"`
+	Model         string                      `json:"model"`
+	Prompt        string                      `json:"prompt"`
+	Seconds       string                      `json:"seconds"`
+	Duration      string                      `json:"duration,omitempty"`
+	AspectRatio   string                      `json:"aspect_ratio"`
+	Resolution    string                      `json:"resolution"`
+	GenerateAudio *bool                       `json:"generate_audio,omitempty"`
+	ImageURLs     []string                    `json:"image_urls,omitempty"`
+	VideoURLs     []string                    `json:"video_urls,omitempty"`
+	AudioURLs     []string                    `json:"audio_urls,omitempty"`
+	Metadata      *newAPIVideoRequestMetadata `json:"metadata,omitempty"`
+}
+
+type newAPIVideoRequestMetadata struct {
+	Content       []map[string]interface{} `json:"content"`
+	Ratio         string                   `json:"ratio"`
+	Resolution    string                   `json:"resolution"`
+	GenerateAudio *bool                    `json:"generate_audio,omitempty"`
 }
 
 type seedanceVideosRequest struct {

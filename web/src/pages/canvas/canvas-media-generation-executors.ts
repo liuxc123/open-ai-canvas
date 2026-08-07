@@ -6,7 +6,7 @@ import { fitNodeSize, nodeSizeFromRatio, VIDEO_NODE_MAX_SIZE } from "@/lib/canva
 import { nextCanvasVersionLabel } from "@/lib/canvas/canvas-layout";
 import { buildAudioGenerationMetadata, buildVideoGenerationMetadata, generationReferenceUrls, runBackendCanvasGenerationTask } from "@/lib/canvas/canvas-project-generation";
 import { storeGeneratedAudio } from "@/services/api/audio";
-import { storeGeneratedVideo } from "@/services/api/video";
+import { resolveGeneratedVideo, storeGeneratedVideo } from "@/services/api/video";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
@@ -88,7 +88,7 @@ export async function executeVideoGeneration({
     try {
         const result = await runBackendCanvasGenerationTask({ projectId, nodeId: videoId, mode: "video", prompt: effectivePrompt, config: generationConfig, referenceImages: generationContext.referenceImages, referenceVideos: generationContext.referenceVideos, referenceAudios: generationContext.referenceAudios, signal: controller.signal, metadata: { sourceNodeId: nodeId, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, resolvedCharacterVoices: generationContext.resolvedCharacterVoices, promptTemplateOperation: sourceNode?.metadata?.promptTemplateOperation, promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables, ...videoGenerationMetadata, ...styleMetadata }, onTaskCreated: (task) => bindGenerationTask(videoId, task) });
         if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
-        const video = await storeGeneratedVideo({ url: result.video.dataUrl, mimeType: result.video.mimeType || "video/mp4" });
+        const video = await resolveGeneratedVideo(result.video);
         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
         setNodes((current) => current.map((node) => {
             if (node.id !== videoId) return node;

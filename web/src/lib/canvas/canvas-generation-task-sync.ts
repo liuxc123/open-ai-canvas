@@ -2,7 +2,7 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { fitNodeSize, nodeSizeFromRatio, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size";
 import { compositeEmotionImage } from "@/lib/canvas/canvas-emotion";
 import { storeGeneratedAudio } from "@/services/api/audio";
-import { storeGeneratedVideo } from "@/services/api/video";
+import { resolveGeneratedVideo, storeGeneratedVideo } from "@/services/api/video";
 import { parseBackendGenerationResult } from "@/services/api/generation-task";
 import type { GenerationTask } from "@/services/api/task-center";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
@@ -88,9 +88,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
 
     if (mode === "video") {
         if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
-        const video = result.video.storageKey
-            ? { url: await resolveMediaUrl(result.video.storageKey, result.video.dataUrl), storageKey: result.video.storageKey, width: result.video.width, height: result.video.height, durationMs: result.video.durationMs, bytes: result.video.bytes || 0, mimeType: result.video.mimeType || "video/mp4" }
-            : await storeGeneratedVideo({ url: result.video.dataUrl, mimeType: result.video.mimeType || "video/mp4" });
+        const video = await resolveGeneratedVideo(result.video);
         const videoSize = fitNodeSize(video.width || node.width || VIDEO_NODE_MAX_SIZE.width, video.height || node.height || VIDEO_NODE_MAX_SIZE.height, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
         return {
             ...node,
@@ -126,6 +124,8 @@ export async function applyGenerationTaskResultToNodes(nodes: CanvasNodeData[], 
     };
 }
 
+const ossSyncAttemptedTaskIds = new Set<string>();
+
 export async function syncGenerationTaskToCanvasStore(task: GenerationTask) {
     if (task.status !== "succeeded" || !task.projectId) return false;
     const store = useCanvasStore.getState();
@@ -133,7 +133,10 @@ export async function syncGenerationTaskToCanvasStore(task: GenerationTask) {
     if (!project) return false;
     const node = findGenerationTaskNode(project.nodes, task);
     if (!node) return false;
-    if (node.metadata?.taskId === task.id && node.metadata.status === "success" && node.metadata.content) return false;
+    if (node.metadata?.taskId === task.id && node.metadata.status === "success" && node.metadata.content) {
+        if (!nodeMediaNeedsSync(node) || ossSyncAttemptedTaskIds.has(task.id)) return false;
+        ossSyncAttemptedTaskIds.add(task.id);
+    }
     const updatedNode = await buildGenerationTaskNodeResult(node, task, project.nodes);
     const latest = useCanvasStore.getState().projects.find((item) => item.id === project.id);
     if (!latest?.nodes.some((item) => item.id === node.id)) return false;
@@ -144,6 +147,12 @@ export async function syncGenerationTaskToCanvasStore(task: GenerationTask) {
 function findGenerationTaskNode(nodes: CanvasNodeData[], task: GenerationTask, targetNodeId?: string) {
     const nodeId = targetNodeId || generationTaskNodeId(task);
     return nodes.find((node) => node.id === nodeId || node.metadata?.taskId === task.id);
+}
+
+function nodeMediaNeedsSync(node: CanvasNodeData): boolean {
+    if (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) return false;
+    if (!node.metadata?.content) return false;
+    return !node.metadata?.storageKey;
 }
 
 function completedTaskMetadata(task: GenerationTask): CanvasNodeMetadata {

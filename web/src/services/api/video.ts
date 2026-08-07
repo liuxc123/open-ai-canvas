@@ -2,7 +2,7 @@ import axios from "axios";
 
 import { createClientId } from "@/lib/client-id";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { getResourceOSSUrl } from "@/services/api/resources";
 import { channelRequest } from "@/services/api/custom-channel-relay";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -267,9 +267,27 @@ function unwrapEnvelopeRecord(value: ApiEnvelope<Record<string, unknown>>): Reco
     return value as Record<string, unknown>;
 }
 
+export async function resolveGeneratedVideo(result: { dataUrl: string; storageKey?: string; width?: number; height?: number; durationMs?: number; bytes?: number; mimeType?: string }): Promise<UploadedFile> {
+    if (result.storageKey) {
+        return {
+            url: await resolveMediaUrl(result.storageKey, result.dataUrl),
+            storageKey: result.storageKey,
+            width: result.width,
+            height: result.height,
+            durationMs: result.durationMs,
+            bytes: result.bytes || 0,
+            mimeType: result.mimeType || "video/mp4",
+        };
+    }
+    return storeGeneratedVideo({ url: result.dataUrl, mimeType: result.mimeType || "video/mp4" });
+}
+
 export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
     if (result.blob) return uploadMediaFile(result.blob, "video");
-    if (result.url) return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
+    if (result.url) {
+        if (result.url.startsWith("data:")) return uploadMediaFile(result.url, "video");
+        return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
+    }
     throw new Error("视频接口没有返回可播放的视频");
 }
 

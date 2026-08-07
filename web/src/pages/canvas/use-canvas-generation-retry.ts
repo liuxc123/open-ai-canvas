@@ -27,7 +27,7 @@ import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution
 import { generationFailureMetadata, unchangedModeratedPrompt } from "@/lib/generation-error";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { storeGeneratedAudio } from "@/services/api/audio";
-import { storeGeneratedVideo } from "@/services/api/video";
+import { resolveGeneratedVideo, storeGeneratedVideo } from "@/services/api/video";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -165,7 +165,7 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, addedSkil
                     const videoGenerationMetadata = buildVideoGenerationMetadata(node, videoContext);
                     const result = await runBackendCanvasGenerationTask({ projectId, nodeId: node.id, mode: "video", prompt: mediaPrompt, config: generationConfig, referenceImages: videoContext?.referenceImages || [], referenceVideos: videoContext?.referenceVideos || [], referenceAudios: videoContext?.referenceAudios || [], signal: controller.signal, metadata: { retry: true, sourceNodeId: sourceNode.id, resolvedCharacterVersions: context?.resolvedCharacterVersions || [], resolvedCharacterVoices: context?.resolvedCharacterVoices || [], promptTemplateOperation: node.metadata?.promptTemplateOperation, promptTemplateVariables: node.metadata?.promptTemplateVariables, ...videoGenerationMetadata, ...styleMetadata }, onTaskCreated: (task) => bindGenerationTask(node.id, task) });
                     if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
-                    const video = await storeGeneratedVideo({ url: result.video.dataUrl, mimeType: result.video.mimeType || "video/mp4" });
+                    const video = await resolveGeneratedVideo(result.video);
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
                     setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), prompt: mediaPrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, ...videoGenerationMetadata, ...styleMetadata, references: videoContext ? generationReferenceUrls(videoContext) : item.metadata?.references } } : item)));
                     return;

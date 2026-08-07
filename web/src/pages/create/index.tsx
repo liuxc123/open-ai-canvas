@@ -18,7 +18,7 @@ import { parseBackendGenerationResult, runBackendGenerationTask, runBackendGener
 import { requestImageQuestion } from "@/services/api/image";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { listGenerationTasks, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
-import { storeGeneratedVideo } from "@/services/api/video";
+import { resolveGeneratedVideo, storeGeneratedVideo } from "@/services/api/video";
 import { uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { modelDisplayName, modelOptionName, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -416,7 +416,7 @@ export default function CreatePage() {
                     onTaskUpdate: bindTask,
                 });
                 if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
-                const storedVideo = await storeGeneratedVideo({ url: result.video.dataUrl, mimeType: result.video.mimeType || "video/mp4" });
+                const storedVideo = await resolveGeneratedVideo(result.video);
                 if (!storedVideo.url) throw new Error("视频结果资源不可用");
                 const taskId = Array.from(boundTaskIds)[0];
                 addCreationAssetOnce(creationVideoAsset({ title: expandedPrompt.slice(0, 24), uploaded: storedVideo, metadata: { source: "create-generation", conversationId: activeConversation.id, messageId: assistantMessage.id, taskId, taskIds: Array.from(boundTaskIds), resultIndex: 0, prompt: expandedPrompt } }), { taskId, messageId: assistantMessage.id, resultIndex: 0 });
@@ -928,6 +928,13 @@ async function persistCreationTaskResults(tasks: GenerationTask[]): Promise<Pers
                     return uploaded.url;
                 }));
                 return { ...task, creationResultUrls: storedImages };
+            }
+
+            if (result?.video?.storageKey) {
+                const storedVideo = await resolveGeneratedVideo(result.video);
+                if (!storedVideo.url) throw new Error("视频结果资源不可用");
+                addCreationAssetOnce(creationVideoAsset({ title: task.prompt.slice(0, 24), uploaded: storedVideo, metadata: { source: "create-generation", taskId: task.id, conversationId: task.clientContext?.conversationId, messageId: task.clientContext?.messageId, batchIndex: task.clientContext?.batchIndex, resultIndex: 0, prompt: task.prompt } }), { taskId: task.id, messageId: task.clientContext?.messageId, resultIndex: 0 });
+                return { ...task, creationResultUrls: [storedVideo.url] };
             }
 
             const videoUrl = result?.video?.dataUrl || (task.previewKind === "video" ? task.previewUrl : "");
