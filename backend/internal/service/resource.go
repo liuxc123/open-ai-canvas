@@ -958,7 +958,6 @@ func signedS3URL(setting ossSettingValue, objectKey string, expiresAt time.Time)
 		baseURL.EscapedPath(),
 		s3CanonicalQueryString(query),
 		"host:" + baseURL.Host + "\n",
-		"",
 		"host",
 		"UNSIGNED-PAYLOAD",
 	}, "\n")
@@ -982,7 +981,18 @@ func newS3Request(method string, setting ossSettingValue, objectKey string, cont
 		return nil, err
 	}
 	baseURL.Path = strings.TrimRight(baseURL.Path, "/") + "/" + escapeObjectKey(objectKey)
-	req, err := http.NewRequest(method, baseURL.String(), body)
+
+	// 读取 body 以计算实际 payload SHA256（腾讯云 COS 不完全支持 UNSIGNED-PAYLOAD）
+	var bodyBytes []byte
+	if body != nil {
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			return nil, err
+		}
+	}
+	payloadHash := sha256Hex(bodyBytes)
+
+	req, err := http.NewRequest(method, baseURL.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -994,13 +1004,13 @@ func newS3Request(method string, setting ossSettingValue, objectKey string, cont
 		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set("X-Amz-Date", dateTime)
-	req.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 
 	headers := map[string]string{"host": baseURL.Host}
 	if contentType != "" {
 		headers["content-type"] = contentType
 	}
-	headers["x-amz-content-sha256"] = "UNSIGNED-PAYLOAD"
+	headers["x-amz-content-sha256"] = payloadHash
 	headers["x-amz-date"] = dateTime
 
 	canonicalHeaders, signedHeaders := s3CanonicalHeaders(headers)
@@ -1009,9 +1019,8 @@ func newS3Request(method string, setting ossSettingValue, objectKey string, cont
 		baseURL.EscapedPath(),
 		"",
 		canonicalHeaders,
-		"",
 		signedHeaders,
-		"UNSIGNED-PAYLOAD",
+		payloadHash,
 	}, "\n")
 
 	scope := date + "/" + setting.Region + "/s3/aws4_request"
