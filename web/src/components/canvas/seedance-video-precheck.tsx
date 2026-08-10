@@ -69,6 +69,7 @@ export function SeedanceVideoPrecheck({
         if (!statusMap.has(a.resourceId)) statusMap.set(a.resourceId, a);
     }
     const refTitle = (id: string) => references.find((r) => resourceIdFromReference(r) === id)?.title || "素材";
+    const refLabel = (id: string) => references.find((r) => resourceIdFromReference(r) === id)?.label || "素材";
 
     const unregistered = resourceIds.filter((id) => !statusMap.get(id));
     const pending = (assets ?? []).filter((a) => a.status === "submitting" || a.status === "submitted" || a.status === "processing");
@@ -104,12 +105,13 @@ export function SeedanceVideoPrecheck({
     const summaryText = summaryParts.map((p) => p.text).join(" · ");
 
     // 分组
-    type Group = { label: string; color: string; Icon: typeof CheckCircle2; items: Array<{ resourceId: string; title: string }> };
+    type GroupItem = { resourceId: string; label: string; title: string; error?: string };
+    type Group = { label: string; color: string; Icon: typeof CheckCircle2; items: GroupItem[] };
     const groups: Group[] = [];
-    if (unregistered.length > 0) groups.push({ label: "未注册", color: "#78716c", Icon: CircleDashed, items: unregistered.map((id) => ({ resourceId: id, title: refTitle(id) })) });
-    if (pending.length > 0) groups.push({ label: "审核中", color: "#ca8a04", Icon: Loader2, items: pending.map((a) => ({ resourceId: a.resourceId, title: refTitle(a.resourceId) })) });
-    if (failed.length > 0) groups.push({ label: "失败", color: "#dc2626", Icon: XCircle, items: failed.map((a) => ({ resourceId: a.resourceId, title: refTitle(a.resourceId) })) });
-    if (approved.length > 0) groups.push({ label: "已通过", color: "#16a34a", Icon: CheckCircle2, items: approved.map((a) => ({ resourceId: a.resourceId, title: refTitle(a.resourceId) })) });
+    if (unregistered.length > 0) groups.push({ label: "未注册", color: "#78716c", Icon: CircleDashed, items: unregistered.map((id) => ({ resourceId: id, label: refLabel(id), title: refTitle(id) })) });
+    if (pending.length > 0) groups.push({ label: "审核中", color: "#ca8a04", Icon: Loader2, items: pending.map((a) => ({ resourceId: a.resourceId, label: refLabel(a.resourceId), title: refTitle(a.resourceId) })) });
+    if (failed.length > 0) groups.push({ label: "失败", color: "#dc2626", Icon: XCircle, items: failed.map((a) => ({ resourceId: a.resourceId, label: refLabel(a.resourceId), title: refTitle(a.resourceId), error: a.errorResponse })) });
+    if (approved.length > 0) groups.push({ label: "已通过", color: "#16a34a", Icon: CheckCircle2, items: approved.map((a) => ({ resourceId: a.resourceId, label: refLabel(a.resourceId), title: refTitle(a.resourceId) })) });
 
     const popover = open && buttonRect ? (
         <SeedancePrecheckPopover
@@ -164,7 +166,7 @@ function SeedancePrecheckPopover({
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
-    groups: Array<{ label: string; color: string; Icon: typeof CheckCircle2; items: Array<{ resourceId: string; title: string }> }>;
+    groups: Array<{ label: string; color: string; Icon: typeof CheckCircle2; items: Array<{ resourceId: string; label: string; title: string; error?: string }> }>;
     canRegister: boolean;
     registerLoading: boolean;
     onRegister: () => void;
@@ -202,19 +204,30 @@ function SeedancePrecheckPopover({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <div className="p-3">
-                <div className="mb-2 text-[var(--fs-label)] font-semibold">素材审核状态</div>
-                <div className="thin-scrollbar space-y-2.5 overflow-y-auto" style={{ maxHeight: "calc(var(--max-h, 300px) - 60px)" }}>
+            <div className="p-2.5">
+                <div className="mb-1.5 text-[var(--fs-nano)] font-semibold">素材审核状态</div>
+                <div className="thin-scrollbar space-y-2 overflow-y-auto" style={{ maxHeight: "calc(var(--max-h, 300px) - 60px)" }}>
                     {groups.map((group) => (
                         <div key={group.label}>
-                            <div className="mb-1 flex items-center gap-1 text-[var(--fs-micro)] font-semibold opacity-50">
-                                <group.Icon size={11} className={group.Icon === Loader2 ? "animate-spin" : ""} />
+                            <div className="mb-0.5 flex items-center gap-1 text-[var(--fs-nano)] font-semibold opacity-50">
+                                <group.Icon size={9} className={group.Icon === Loader2 ? "animate-spin" : ""} />
                                 {group.label}（{group.items.length}）
                             </div>
                             {group.items.map((item) => (
-                                <div key={item.resourceId} className="flex items-center gap-1.5 py-0.5 pl-4 text-[var(--fs-label)]" style={{ color: group.color }}>
-                                    <group.Icon size={10} className={group.Icon === Loader2 ? "animate-spin shrink-0" : "shrink-0"} />
-                                    <span className="truncate">{item.title}</span>
+                                <div key={item.resourceId} className="py-0.5 pl-3.5">
+                                    <div className="flex items-center gap-1 text-[var(--fs-nano)]" style={{ color: group.color }}>
+                                        <group.Icon size={8} className={group.Icon === Loader2 ? "animate-spin shrink-0" : "shrink-0"} />
+                                        <Tooltip title={item.title !== item.label ? item.title : undefined} mouseEnterDelay={0.3}>
+                                            <span className="truncate">{item.label}</span>
+                                        </Tooltip>
+                                    </div>
+                                    {item.error ? (
+                                        <Tooltip title={item.error} mouseEnterDelay={0.3}>
+                                            <div className="mt-0.5 flex items-center gap-0.5 pl-3 text-[var(--fs-nano)] leading-tight opacity-60" style={{ color: group.color }}>
+                                                <span className="truncate">{item.error}</span>
+                                            </div>
+                                        </Tooltip>
+                                    ) : null}
                                 </div>
                             ))}
                         </div>
