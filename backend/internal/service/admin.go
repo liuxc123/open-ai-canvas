@@ -128,6 +128,7 @@ type PublicChannelModelPrice struct {
 	OutputTokenPriceMicrocredits int64                      `json:"outputTokenPriceMicrocredits"`
 	CachedTokenPriceMicrocredits int64                      `json:"cachedTokenPriceMicrocredits"`
 	CapabilityConfig             *ModelCapabilityConfig     `json:"capabilityConfig,omitempty"`
+	FormulaConfig                *model.FormulaBillingConfig `json:"formulaConfig,omitempty"`
 }
 
 func (s *Service) RequireAdmin(user *model.User) error {
@@ -761,7 +762,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 		models = append(models, item.ModelKey)
 		if item.Enabled && item.PriceConfigured {
 			capabilityConfig, _ := DecodeModelCapabilityConfig(item.CapabilityConfigJSON)
-			modelCosts = append(modelCosts, PublicChannelModelPrice{Model: item.ModelKey, DisplayName: item.DisplayName, Capability: item.Capability, Protocol: item.Protocol, BillingMode: item.BillingMode, UnitPriceMicrocredits: item.UnitPriceMicrocredits, InputTokenPriceMicrocredits: item.InputTokenPriceMicrocredits, OutputTokenPriceMicrocredits: item.OutputTokenPriceMicrocredits, CachedTokenPriceMicrocredits: item.CachedTokenPriceMicrocredits, CapabilityConfig: capabilityConfig})
+			modelCosts = append(modelCosts, PublicChannelModelPrice{Model: item.ModelKey, DisplayName: item.DisplayName, Capability: item.Capability, Protocol: item.Protocol, BillingMode: item.BillingMode, UnitPriceMicrocredits: item.UnitPriceMicrocredits, InputTokenPriceMicrocredits: item.InputTokenPriceMicrocredits, OutputTokenPriceMicrocredits: item.OutputTokenPriceMicrocredits, CachedTokenPriceMicrocredits: item.CachedTokenPriceMicrocredits, CapabilityConfig: capabilityConfig, FormulaConfig: parseFormulaConfig(item.FormulaConfigJSON)})
 		}
 	}
 	if len(models) == 0 {

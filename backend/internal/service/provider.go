@@ -1617,6 +1617,19 @@ func runNewAPIChannel2VideoTask(ctx context.Context, input canvasGenerationInput
 		if jsonBytes, marshalErr := json.Marshal(body); marshalErr == nil {
 			log.Printf("[DEBUG] NewAPI Video Generations 任务创建请求：%s", string(jsonBytes))
 		}
+		if metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext); ok && metadata.Service != nil && metadata.BillingOrderID != "" {
+			if order, orderErr := metadata.Service.repo.BillingOrder(metadata.BillingOrderID); orderErr == nil {
+				log.Printf("[DEBUG] 公式计费参数：resolution=%s, seconds=%s, duration=%s, model=%s, 扣费=%.6f 积分 (%d 微积分)",
+					body.Resolution, body.Seconds, body.Duration, body.Model,
+					float64(order.AmountMicrocredits)/float64(CreditScale), order.AmountMicrocredits)
+			} else {
+				log.Printf("[DEBUG] 公式计费参数：resolution=%s, seconds=%s, duration=%s, model=%s, 账单查询失败: %v",
+					body.Resolution, body.Seconds, body.Duration, body.Model, orderErr)
+			}
+		} else {
+			log.Printf("[DEBUG] 公式计费参数：resolution=%s, seconds=%s, duration=%s, model=%s, 无账单上下文",
+				body.Resolution, body.Seconds, body.Duration, body.Model)
+		}
 		return nil, errors.New("[DEBUG] NewAPI Video Generations 任务测试拦截")
 		if err := postJSON(ctx, input.Config, "/video/generations", body, &created); err != nil {
 			return nil, err

@@ -34,12 +34,13 @@ export type ModelChannel = {
         displayName?: string;
         capability: ModelCapability;
         protocol?: ModelProtocol;
-        billingMode: "fixed_request" | "per_second" | "token";
+        billingMode: "fixed_request" | "per_second" | "token" | "formula";
         unitPriceMicrocredits: number;
         inputTokenPriceMicrocredits?: number;
         outputTokenPriceMicrocredits?: number;
         cachedTokenPriceMicrocredits?: number;
         capabilityConfig?: ModelCapabilityConfig;
+        formulaConfig?: { formula: string };
     }>;
 };
 

@@ -26,6 +26,7 @@ type ChannelModelRequest struct {
 	PriceConfigured              bool                   `json:"priceConfigured"`
 	Enabled                      *bool                  `json:"enabled"`
 	CapabilityConfig             *ModelCapabilityConfig `json:"capabilityConfig"`
+	FormulaConfig                *model.FormulaBillingConfig `json:"formulaConfig"`
 }
 
 // AdminChannelModelFetchResult 是管理员从上游拉目录后的汇总：models 为去重后的标识，added 为本次新建条数。
@@ -76,6 +77,12 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]mod
 		if json.Unmarshal([]byte(items[index].CapabilityConfigJSON), &config) == nil {
 			items[index].CapabilityConfig = config
 		}
+	}
+	for index := range items {
+		if strings.TrimSpace(items[index].FormulaConfigJSON) == "" {
+			continue
+		}
+		items[index].FormulaConfig = parseFormulaConfig(items[index].FormulaConfigJSON)
 	}
 	return items, nil
 }
@@ -146,8 +153,8 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if billingMode == "" {
 		billingMode = "fixed_request"
 	}
-	if billingMode != "fixed_request" && billingMode != "per_second" && billingMode != "token" {
-		return nil, BadAuthRequest("模型计费方式仅支持按次、按秒或 Token")
+	if billingMode != "fixed_request" && billingMode != "per_second" && billingMode != "token" && billingMode != "formula" {
+		return nil, BadAuthRequest("模型计费方式仅支持按次、按秒、Token 或公式")
 	}
 	if billingMode == "per_second" && capability != "video" {
 		return nil, BadAuthRequest("只有视频模型可以按秒计费")
@@ -160,6 +167,14 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	if billingMode == "token" && req.InputTokenPriceMicrocredits == 0 && req.OutputTokenPriceMicrocredits == 0 && req.CachedTokenPriceMicrocredits == 0 {
 		return nil, BadAuthRequest("Token 计费至少需要配置一项价格")
+	}
+	if billingMode == "formula" {
+		if req.FormulaConfig == nil || strings.TrimSpace(req.FormulaConfig.Formula) == "" {
+			return nil, BadAuthRequest("公式计费需要配置计算公式")
+		}
+		if err := ValidateFormula(req.FormulaConfig.Formula); err != nil {
+			return nil, BadAuthRequest(err.Error())
+		}
 	}
 	const maxTokenPriceMicrocredits = int64(1_000_000) * CreditScale
 	if req.InputTokenPriceMicrocredits > maxTokenPriceMicrocredits || req.OutputTokenPriceMicrocredits > maxTokenPriceMicrocredits || req.CachedTokenPriceMicrocredits > maxTokenPriceMicrocredits {
@@ -209,6 +224,17 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	} else {
 		item.CapabilityConfigJSON = ""
 		item.CapabilityVersion = 0
+	}
+	if billingMode == "formula" {
+		newFormulaJSON := serializeFormulaConfig(req.FormulaConfig)
+		if item.FormulaConfigJSON != newFormulaJSON {
+			item.PriceVersion++
+		}
+		item.FormulaConfigJSON = newFormulaJSON
+		item.FormulaConfig = req.FormulaConfig
+	} else {
+		item.FormulaConfigJSON = ""
+		item.FormulaConfig = nil
 	}
 	if req.Enabled != nil {
 		item.Enabled = *req.Enabled

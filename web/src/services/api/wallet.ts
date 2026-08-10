@@ -46,6 +46,10 @@ export type CreditPolicy = {
     modelMultiplierBasisPoints: Record<string, number>;
 };
 
+export type FormulaBillingConfig = {
+    formula: string;
+};
+
 export type ChannelModel = {
     id: string;
     channelId: string;
@@ -53,7 +57,7 @@ export type ChannelModel = {
     displayName: string;
     capability: "text" | "image" | "video" | "audio" | "";
     protocol?: import("@/lib/model-protocols").ModelProtocol;
-    billingMode: "fixed_request" | "per_second" | "token";
+    billingMode: "fixed_request" | "per_second" | "token" | "formula";
     unitPriceMicrocredits: number;
     inputTokenPriceMicrocredits: number;
     outputTokenPriceMicrocredits: number;
@@ -63,6 +67,7 @@ export type ChannelModel = {
     priceVersion: number;
     capabilityVersion?: number;
     capabilityConfig?: import("@/lib/model-capabilities").ModelCapabilityConfig;
+    formulaConfig?: FormulaBillingConfig;
     createdAt: string;
     updatedAt: string;
 };
@@ -153,7 +158,7 @@ export type BillingOrder = {
     model: string;
     capability: string;
     scene: string;
-    billingMode: "fixed_request" | "per_second" | "token";
+    billingMode: "fixed_request" | "per_second" | "token" | "formula";
     unitPriceMicrocredits: number;
     multiplierBasisPoints: number;
     quantity: number;

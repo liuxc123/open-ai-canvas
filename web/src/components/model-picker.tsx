@@ -263,6 +263,7 @@ function modelMenuPrice(config: AiConfig, model: string): { value: number; unit:
     const channel = resolveModelChannel(config, model);
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     if (!cost) return channel.scope === "system" ? null : undefined;
+    if (cost.billingMode === "formula") return null;
     return { value: cost.unitPriceMicrocredits / 1_000_000, unit: cost.billingMode === "per_second" ? "秒" : "次" };
 }
 

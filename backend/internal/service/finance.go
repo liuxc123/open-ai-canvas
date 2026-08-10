@@ -449,14 +449,14 @@ func (s *Service) taskBillingOrder(userID string, task *model.Task, input map[st
 		capability = capabilityFromTaskType(task.Type)
 	}
 	scene := firstNonEmpty(strings.TrimSpace(task.Operation), task.Type)
-	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingQuantity(capability, config["videoSeconds"]), estimateTaskTokens(input))
+	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingQuantity(capability, config["videoSeconds"]), estimateTaskTokens(input), normalizeFormulaBody(input, config), nil)
 }
 
 func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, quantity int64) (*model.BillingOrder, error) {
-	return s.ReserveProxyBillingWithBody(userID, channelID, modelKey, capability, scene, idempotencyKey, quantity, nil)
+	return s.ReserveProxyBillingWithBody(userID, channelID, modelKey, capability, scene, idempotencyKey, quantity, nil, nil)
 }
 
-func (s *Service) ReserveProxyBillingWithBody(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, quantity int64, requestBody []byte) (*model.BillingOrder, error) {
+func (s *Service) ReserveProxyBillingWithBody(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, quantity int64, requestBody []byte, headers map[string]string) (*model.BillingOrder, error) {
 	enabled, err := s.FeatureEnabled(FeatureCredits)
 	if err != nil {
 		return nil, err
@@ -467,7 +467,8 @@ func (s *Service) ReserveProxyBillingWithBody(userID string, channelID string, m
 	if strings.TrimSpace(idempotencyKey) == "" {
 		idempotencyKey = newID()
 	}
-	order, err := s.newBillingOrder(userID, "", "proxy:"+idempotencyKey, channelID, modelKey, capability, firstNonEmpty(strings.TrimSpace(scene), "system_proxy"), quantity, estimateProxyTokens(requestBody))
+	body := parseRequestBody(requestBody)
+	order, err := s.newBillingOrder(userID, "", "proxy:"+idempotencyKey, channelID, modelKey, capability, firstNonEmpty(strings.TrimSpace(scene), "system_proxy"), quantity, estimateProxyTokens(requestBody), body, headers)
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +481,7 @@ func (s *Service) ReserveProxyBillingWithBody(userID string, channelID string, m
 	return order, nil
 }
 
-func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey string, channelID string, modelKey string, capability string, scene string, requestedQuantity int64, tokenEstimate tokenBillingEstimate) (*model.BillingOrder, error) {
+func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey string, channelID string, modelKey string, capability string, scene string, requestedQuantity int64, tokenEstimate tokenBillingEstimate, body map[string]any, headers map[string]string) (*model.BillingOrder, error) {
 	item, err := s.repo.ChannelModelByKey(channelID, modelKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, BadAuthRequest("当前系统渠道模型未配置或已停用")
@@ -514,6 +515,10 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 			return nil, BadAuthRequest("无法估算文本 Token 用量")
 		}
 		quantity = tokenEstimate.InputTokens + tokenEstimate.OutputTokens
+	case "formula":
+		if strings.TrimSpace(item.FormulaConfigJSON) == "" {
+			return nil, BadAuthRequest("公式计费配置缺失，请先配置计算公式")
+		}
 	default:
 		return nil, BadAuthRequest("当前模型计费方式暂不支持")
 	}
@@ -525,9 +530,13 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 	if configured := policy.ModelMultiplierBPS[modelKey]; configured > 0 {
 		multiplierBPS = configured
 	}
-	if item.BillingMode == "token" {
+	switch item.BillingMode {
+	case "token":
 		amount, err = tokenEstimateAmount(item, tokenEstimate, multiplierBPS)
-	} else {
+	case "formula":
+		formulaCfg := parseFormulaConfig(item.FormulaConfigJSON)
+		amount, err = formulaAmountMicrocredits(formulaCfg, body, headers, multiplierBPS)
+	default:
 		amount, err = creditAmount(item.UnitPriceMicrocredits, quantity, multiplierBPS)
 	}
 	if err != nil {

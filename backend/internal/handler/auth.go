@@ -767,7 +767,7 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	}
 	defer releaseChannel()
 	if c.Request.Method == http.MethodPost {
-		order, err := svc.ReserveProxyBillingWithBody(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), capability, c.GetHeader("X-Canvas-Scene"), c.GetHeader("X-Idempotency-Key"), proxyRequestVideoSeconds(c.GetHeader("Content-Type"), body), body)
+		order, err := svc.ReserveProxyBillingWithBody(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), capability, c.GetHeader("X-Canvas-Scene"), c.GetHeader("X-Idempotency-Key"), proxyRequestVideoSeconds(c.GetHeader("Content-Type"), body), body, extractRequestHeaders(c))
 		if err != nil {
 			failService(c, err)
 			return
@@ -948,4 +948,15 @@ func failService(c *gin.Context, err error) {
 		return
 	}
 	fail(c, http.StatusInternalServerError, err)
+}
+
+// extractRequestHeaders 将 HTTP 请求头转为 map[string]string，供公式计费使用。
+func extractRequestHeaders(c *gin.Context) map[string]string {
+	headers := make(map[string]string, len(c.Request.Header))
+	for k, v := range c.Request.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+	return headers
 }

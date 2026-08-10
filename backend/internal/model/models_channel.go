@@ -43,9 +43,17 @@ type ChannelModel struct {
 	CapabilityConfigJSON         string               `json:"-" gorm:"type:text"`
 	CapabilityVersion            int64                `json:"capabilityVersion"`
 	CapabilityConfig             map[string]any       `json:"capabilityConfig,omitempty" gorm:"-"`
+	FormulaConfigJSON            string               `json:"-" gorm:"type:text"`
+	FormulaConfig                *FormulaBillingConfig `json:"formulaConfig,omitempty" gorm:"-"`
 	CreatedAt                    time.Time            `json:"createdAt"`
 	UpdatedAt                    time.Time            `json:"updatedAt"`
 	DeletedAt                    gorm.DeletedAt       `json:"-" gorm:"index"`
+}
+
+// FormulaBillingConfig 描述公式计费的自定义计算公式。
+// 公式中可直接引用 body.xxx 访问请求体字段，headers["xxx"] 访问请求头。
+type FormulaBillingConfig struct {
+	Formula string `json:"formula"`
 }
 
 type ApiCallLog struct {

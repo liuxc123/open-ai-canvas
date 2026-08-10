@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { App, Button, Drawer, Form, Input, InputNumber, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { App, Button, Drawer, Form, Input, InputNumber, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { FlaskConical, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 
@@ -9,7 +9,7 @@ import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { CapabilityCardPicker, ProtocolCardPicker, type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, modelProtocolLabel, type ModelProtocol } from "@/lib/model-protocols";
-import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, testAdminChannelModel, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
+import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, testAdminChannelModel, updateAdminChannelModel, type ChannelModel, type FormulaBillingConfig } from "@/services/api/wallet";
 import type { ModelChannel } from "@/stores/use-config-store";
 import { AdminPageFrame } from "./admin-shell";
 
@@ -27,6 +27,7 @@ type FormValues = {
     cachedTokenPrice: number;
     enabled: boolean;
     capabilityConfig?: ModelCapabilityConfig;
+    formula?: string;
 };
 
 export function ChannelModelManager({ channel, onClose, onChanged }: { channel: ModelChannel; onClose: () => void; onChanged: () => void | Promise<void> }) {
@@ -47,6 +48,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const billingMode = Form.useWatch("billingMode", form) || "fixed_request";
     const modelCapability = Form.useWatch("capability", form);
     const modelKey = Form.useWatch("modelKey", form) || "";
+    const formulaTextareaRef = useRef<HTMLTextAreaElement>(null);
 
     const reload = async () => {
         if (!channel) return;
@@ -89,13 +91,13 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
     const startCreate = () => {
         setEditing(null);
-        form.setFieldsValue({ modelKey: "", displayName: "", capability: "text", protocol: "chat-completion", billingMode: "fixed_request", unitPrice: 0, inputTokenPrice: 0, outputTokenPrice: 0, cachedTokenPrice: 0, enabled: true, capabilityConfig: undefined });
+        form.setFieldsValue({ modelKey: "", displayName: "", capability: "text", protocol: "chat-completion", billingMode: "fixed_request", unitPrice: 0, inputTokenPrice: 0, outputTokenPrice: 0, cachedTokenPrice: 0, enabled: true, capabilityConfig: undefined, formula: "" });
         setEditorOpen(true);
     };
 
     const startEdit = (item: ChannelModel) => {
         setEditing(item);
-        form.setFieldsValue({ modelKey: item.modelKey, displayName: item.displayName, capability: item.capability || undefined, protocol: item.protocol, billingMode: item.billingMode, unitPrice: item.unitPriceMicrocredits / 1_000_000, inputTokenPrice: item.inputTokenPriceMicrocredits / 1_000_000, outputTokenPrice: item.outputTokenPriceMicrocredits / 1_000_000, cachedTokenPrice: item.cachedTokenPriceMicrocredits / 1_000_000, enabled: item.enabled, capabilityConfig: item.capability === "image" || item.capability === "video" ? item.capabilityConfig || defaultModelCapabilityConfig(item.protocol, item.modelKey) : undefined });
+        form.setFieldsValue({ modelKey: item.modelKey, displayName: item.displayName, capability: item.capability || undefined, protocol: item.protocol, billingMode: item.billingMode, unitPrice: item.unitPriceMicrocredits / 1_000_000, inputTokenPrice: item.inputTokenPriceMicrocredits / 1_000_000, outputTokenPrice: item.outputTokenPriceMicrocredits / 1_000_000, cachedTokenPrice: item.cachedTokenPriceMicrocredits / 1_000_000, enabled: item.enabled, capabilityConfig: item.capability === "image" || item.capability === "video" ? item.capabilityConfig || defaultModelCapabilityConfig(item.protocol, item.modelKey) : undefined, formula: item.formulaConfig?.formula || "" });
         setEditorOpen(true);
     };
 
@@ -103,6 +105,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         const values = await form.validateFields();
         setSaving(true);
         try {
+            const formulaConfig: FormulaBillingConfig | undefined = values.billingMode === "formula" && values.formula ? { formula: values.formula.trim() } : undefined;
             const payload = {
                 modelKey: values.modelKey.trim(),
                 displayName: values.displayName?.trim() || values.modelKey.trim(),
@@ -116,6 +119,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 priceConfigured: true,
                 enabled: values.enabled !== false,
                 capabilityConfig: values.capability === "image" || values.capability === "video" ? values.capabilityConfig : undefined,
+                formulaConfig,
             };
             if (editing) await updateAdminChannelModel(channel.id, editing.id, payload);
             else await createAdminChannelModel(channel.id, payload);
@@ -163,6 +167,19 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const handleFormValuesChange = (changed: Partial<FormValues>) => {
         if (changed.protocol && (modelCapability === "image" || modelCapability === "video")) {
             form.setFieldValue("capabilityConfig", defaultModelCapabilityConfig(changed.protocol, form.getFieldValue("modelKey")));
+        }
+        if (changed.billingMode) {
+            if (changed.billingMode !== "formula") {
+                form.setFieldValue("formula", "");
+            }
+            if (changed.billingMode !== "token") {
+                form.setFieldValue("inputTokenPrice", 0);
+                form.setFieldValue("outputTokenPrice", 0);
+                form.setFieldValue("cachedTokenPrice", 0);
+            }
+            if (changed.billingMode !== "fixed_request" && changed.billingMode !== "per_second") {
+                form.setFieldValue("unitPrice", 0);
+            }
         }
         if (!changed.capability) return;
         const currentBillingMode = form.getFieldValue("billingMode") as ChannelModel["billingMode"] | undefined;
@@ -258,7 +275,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     </Form.Item>
                     {modelCapability === "image" || modelCapability === "video" ? <Form.Item name="capabilityConfig" rules={[{ required: true, message: `请配置${modelCapability === "image" ? "图片" : "视频"}能力参数` }]}><ModelCapabilityEditor capability={modelCapability} model={modelKey} protocol={form.getFieldValue("protocol")} /></Form.Item> : null}
                     <Form.Item name="billingMode" label="计费方式" rules={[{ required: true }]}>
-                        <Segmented block options={[{ label: "按次计费", value: "fixed_request" }, { label: "按秒计费", value: "per_second", disabled: modelCapability !== "video" }, { label: "Token 计费", value: "token", disabled: modelCapability !== "text" }]} />
+                        <Segmented block options={[{ label: "按次计费", value: "fixed_request" }, { label: "按秒计费", value: "per_second", disabled: modelCapability !== "video" }, { label: "Token 计费", value: "token", disabled: modelCapability !== "text" }, { label: "公式计费", value: "formula" }]} />
                     </Form.Item>
                     {billingMode === "token" ? (
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -271,6 +288,34 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                             <Form.Item name="cachedTokenPrice" label="缓存 / 百万 Token" rules={[{ required: true, message: "请输入缓存价格" }]}>
                                 <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
                             </Form.Item>
+                        </div>
+                    ) : billingMode === "formula" ? (
+                        <div className="space-y-2">
+                            <div className="text-xs text-foreground/50">点击下方常量可插入到公式中</div>
+                            <FormulaSnippetPicker textareaRef={formulaTextareaRef} />
+                            <Form.Item name="formula" label="计算公式" rules={[{ required: true, message: "请输入计算公式" }]}>
+                                <Input.TextArea
+                                    ref={(node) => {
+                                        // antd TextArea ref 是 TextAreaRef，需要取 nativeElement
+                                        const native = node?.nativeElement;
+                                        if (native && native.tagName === "TEXTAREA") {
+                                            (formulaTextareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = native as HTMLTextAreaElement;
+                                        }
+                                    }}
+                                    autoSize={{ minRows: 2, maxRows: 6 }}
+                                    placeholder="例如：body.duration * 0.5"
+                                />
+                            </Form.Item>
+                            <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-foreground/55 leading-5">
+                                <div className="font-medium text-foreground/70 mb-1">公式语法说明</div>
+                                <div>• <code className="text-foreground/80">body.xxx</code> 访问请求体字段，<code className="text-foreground/80">headers["X-Key"]</code> 访问请求头</div>
+                                <div>• 算术: <code>+ - * /</code> &nbsp; 比较: <code>&gt; &lt; &gt;= &lt;= == !=</code> &nbsp; 逻辑: <code>&& || !</code></div>
+                                <div>• 条件: <code>条件 ? 真值 : 假值</code>（可嵌套实现多档） &nbsp; 成员: <code>in ["a","b"]</code></div>
+                                <div>• 函数: <code>ceil floor round abs max min len</code></div>
+                                <div>• 多档示例: <code>duration &gt; 30 ? 3.0 : (duration &gt; 10 ? 2.0 : 1.0)</code></div>
+                                <div>• 匹配示例: <code>quality in ["hd","4k"] ? 2.0 : 1.0</code></div>
+                                <div>• 公式结果单位为积分，如 <code>body.duration * 0.5</code> 表示每秒 0.5 积分</div>
+                            </div>
                         </div>
                     ) : (
                         <Form.Item name="unitPrice" label={billingMode === "per_second" ? "每秒消耗积分" : "每次消耗积分"} rules={[{ required: true, message: "请输入积分价格" }]}>
@@ -298,6 +343,11 @@ function capabilityLabel(value: ChannelModel["capability"]) {
 }
 
 function billingSummary(item: ChannelModel) {
+    if (item.billingMode === "formula") {
+        const formula = item.formulaConfig?.formula || "";
+        const display = formula.length > 40 ? formula.slice(0, 40) + "…" : formula;
+        return <Tag color="purple">公式: {display || "未配置"}</Tag>;
+    }
     if (item.billingMode !== "token") {
         return `${formatCredits(item.unitPriceMicrocredits)} 积分 / ${item.billingMode === "per_second" ? "秒" : "次"}`;
     }
@@ -312,4 +362,118 @@ function billingSummary(item: ChannelModel) {
 
 function formatCredits(value: number) {
     return (value / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 6 });
+}
+
+// ── 公式常量/变量快速选择 ──────────────────────────────────────────
+
+type FormulaSnippet = {
+    label: string;
+    snippet: string;
+    tip?: string;
+};
+
+type FormulaSnippetGroup = {
+    title: string;
+    items: FormulaSnippet[];
+};
+
+const FORMULA_SNIPPET_GROUPS: FormulaSnippetGroup[] = [
+    {
+        title: "请求体",
+        items: [
+            { label: "duration", snippet: "body.duration", tip: "视频时长（秒）" },
+            { label: "seconds", snippet: "body.seconds", tip: "视频时长（秒），NewAPI Video Generations / Grok 使用此字段" },
+            { label: "resolution", snippet: 'body.resolution', tip: "视频分辨率，如 480p、720p、1080p、2160p" },
+            { label: "width", snippet: "body.width", tip: "图片/视频宽度" },
+            { label: "height", snippet: "body.height", tip: "图片/视频高度" },
+            { label: "size", snippet: 'body.size', tip: "尺寸字符串，如 1024x1024" },
+            { label: "quality", snippet: 'body.quality', tip: "质量参数" },
+            { label: "n", snippet: "body.n", tip: "生成数量" },
+            { label: "model", snippet: 'body.model', tip: "模型名称" },
+            { label: "max_tokens", snippet: "body.max_tokens", tip: "最大输出 Token 数" },
+            { label: "temperature", snippet: "body.temperature", tip: "温度参数" },
+        ],
+    },
+    {
+        title: "请求头",
+        items: [
+            { label: "Content-Type", snippet: 'headers["Content-Type"]', tip: "请求内容类型" },
+            { label: "X-Custom-*", snippet: 'headers["X-Custom-Key"]', tip: "自定义请求头（替换 Key）" },
+        ],
+    },
+    {
+        title: "运算符",
+        items: [
+            { label: "+", snippet: " + " },
+            { label: "-", snippet: " - " },
+            { label: "*", snippet: " * " },
+            { label: "/", snippet: " / " },
+            { label: ">", snippet: " > " },
+            { label: "<", snippet: " < " },
+            { label: ">=", snippet: " >= " },
+            { label: "<=", snippet: " <= " },
+            { label: "==", snippet: " == " },
+            { label: "!=", snippet: " != " },
+            { label: "&&", snippet: " && " },
+            { label: "||", snippet: " || " },
+            { label: "!", snippet: "!" },
+            { label: "in", snippet: " in ", tip: '值 in [a, b, c]，如 quality in ["hd","4k"]' },
+            { label: "?:", snippet: " ?  : ", tip: "条件 ? 真值 : 假值" },
+        ],
+    },
+    {
+        title: "函数",
+        items: [
+            { label: "ceil", snippet: "ceil()", tip: "向上取整" },
+            { label: "floor", snippet: "floor()", tip: "向下取整" },
+            { label: "round", snippet: "round()", tip: "四舍五入" },
+            { label: "abs", snippet: "abs()", tip: "绝对值" },
+            { label: "max", snippet: "max(, )", tip: "取较大值" },
+            { label: "min", snippet: "min(, )", tip: "取较小值" },
+            { label: "len", snippet: "len()", tip: "数组长度" },
+        ],
+    },
+];
+
+function FormulaSnippetPicker({ textareaRef }: { textareaRef: React.RefObject<HTMLTextAreaElement | null> }) {
+    const insertSnippet = (snippet: string) => {
+        const el = textareaRef.current;
+        if (!el) return;
+        const start = el.selectionStart ?? el.value.length;
+        const end = el.selectionEnd ?? el.value.length;
+        const before = el.value.slice(0, start);
+        const after = el.value.slice(end);
+        // 对于带括号的函数，将光标放在括号内
+        const cursorOffset = snippet.includes("()") ? snippet.indexOf(")") : snippet.includes("(, )") ? snippet.indexOf(", ") + 2 : snippet.length;
+        const newValue = before + snippet + after;
+        // 使用 nativeInputValueSetter 绕过 React 受控组件限制
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+        if (nativeSetter) {
+            nativeSetter.call(el, newValue);
+        }
+        el.selectionStart = el.selectionEnd = start + cursorOffset;
+        el.focus();
+        // 触发 React 的 onChange
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    return (
+        <div className="space-y-1.5">
+            {FORMULA_SNIPPET_GROUPS.map((group) => (
+                <div key={group.title} className="flex flex-wrap items-center gap-1">
+                    <span className="mr-1 text-[var(--fs-micro)] font-medium text-foreground/40 select-none">{group.title}</span>
+                    {group.items.map((item) => (
+                        <Tooltip key={item.label + item.snippet} title={item.tip || item.snippet} mouseEnterDelay={0.4}>
+                            <Tag
+                                className="cursor-pointer !m-0 !px-1.5 !text-[var(--fs-micro)] !font-mono !leading-[20px] transition-colors hover:!bg-primary/10 hover:!text-primary hover:!border-primary/30"
+                                onClick={() => insertSnippet(item.snippet)}
+                            >
+                                {item.label}
+                            </Tag>
+                        </Tooltip>
+                    ))}
+                </div>
+            ))}
+        </div>
+    );
 }

@@ -62,6 +62,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         model: modelOptionName(config.model),
         count: mode === "image" ? generationCount : 1,
         seconds: mode === "video" ? config.videoSeconds : 1,
+        vquality: mode === "video" ? config.vquality : undefined,
+        size: mode === "video" ? config.size : undefined,
     });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const videoFrameOptions = mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
