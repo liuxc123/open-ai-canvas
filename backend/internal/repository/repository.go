@@ -1632,3 +1632,68 @@ func (r *Repository) SaveUserPromptCustomization(customization *model.UserPrompt
 func (r *Repository) DeleteUserPromptCustomization(userID string, operation string) error {
 	return r.db.Delete(&model.UserPromptCustomization{}, "user_id = ? AND operation = ?", userID, operation).Error
 }
+
+// ===== SeedanceAsset =====
+
+func (r *Repository) CreateSeedanceAsset(asset *model.SeedanceAsset) error {
+	return r.db.Create(asset).Error
+}
+
+func (r *Repository) SaveSeedanceAsset(asset *model.SeedanceAsset) error {
+	return r.db.Save(asset).Error
+}
+
+func (r *Repository) SeedanceAssetByID(userID string, id string) (*model.SeedanceAsset, error) {
+	var asset model.SeedanceAsset
+	if err := r.db.First(&asset, "id = ? AND user_id = ?", id, userID).Error; err != nil {
+		return nil, err
+	}
+	return &asset, nil
+}
+
+// SeedanceAssetByIdentity 按 (UserID, ResourceID, AccountFingerprint) 复合唯一键查询。
+func (r *Repository) SeedanceAssetByIdentity(userID string, resourceID string, fingerprint string) (*model.SeedanceAsset, error) {
+	var asset model.SeedanceAsset
+	if err := r.db.First(&asset, "user_id = ? AND resource_id = ? AND account_fingerprint = ?", userID, resourceID, fingerprint).Error; err != nil {
+		return nil, err
+	}
+	return &asset, nil
+}
+
+// SeedanceAssetsByResourceIDs 按 userID + resourceIDs 批量查询资产记录。
+// 每个 resourceId 只返回最新的一条（按 updated_at desc），避免旧记录覆盖新记录。
+func (r *Repository) SeedanceAssetsByResourceIDs(userID string, resourceIDs []string) ([]model.SeedanceAsset, error) {
+	if len(resourceIDs) == 0 {
+		return nil, nil
+	}
+	var assets []model.SeedanceAsset
+	// 子查询：每个 resource_id 取 updated_at 最大的一条
+	subQuery := r.db.Model(&model.SeedanceAsset{}).
+		Select("MAX(id)").
+		Where("user_id = ? AND resource_id IN ?", userID, resourceIDs).
+		Group("resource_id")
+	err := r.db.Where("id IN (?)", subQuery).Order("updated_at desc").Find(&assets).Error
+	return assets, err
+}
+
+// SeedanceAssetsByResourceIDsAndFingerprint 按 userID + resourceIDs + fingerprint 批量查询。
+func (r *Repository) SeedanceAssetsByResourceIDsAndFingerprint(userID string, resourceIDs []string, fingerprint string) ([]model.SeedanceAsset, error) {
+	if len(resourceIDs) == 0 {
+		return nil, nil
+	}
+	var assets []model.SeedanceAsset
+	err := r.db.Where("user_id = ? AND resource_id IN ? AND account_fingerprint = ?", userID, resourceIDs, fingerprint).Order("updated_at desc").Find(&assets).Error
+	return assets, err
+}
+
+func (r *Repository) UpdateSeedanceAssetStatus(id string, status string, errorResponse string) error {
+	updates := map[string]any{"status": status, "updated_at": time.Now()}
+	if errorResponse != "" {
+		updates["error_response"] = errorResponse
+	}
+	if status == "approved" {
+		now := time.Now()
+		updates["approved_at"] = &now
+	}
+	return r.db.Model(&model.SeedanceAsset{}).Where("id = ?", id).Updates(updates).Error
+}

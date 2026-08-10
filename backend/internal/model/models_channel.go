@@ -11,8 +11,10 @@ type ModelChannel struct {
 	Scope            ChannelScope   `json:"scope" gorm:"index;size:24"`
 	Enabled          bool           `json:"enabled" gorm:"index"`
 	Name             string         `json:"name" gorm:"size:80"`
-	BaseURL          string         `json:"baseUrl"`
-	APIKey           string         `json:"-"`
+	BaseURL            string         `json:"baseUrl"`
+	MaterialBaseURL    string         `json:"materialBaseUrl,omitempty" gorm:"size:500"`    // 资产注册 API 地址，为空时回退到 BaseURL
+	MaterialAPIVersion string         `json:"materialApiVersion,omitempty" gorm:"size:24"` // 资产 API 协议版本，默认 "v1"；bump 后强制所有素材重新注册
+	APIKey             string         `json:"-"`
 	SecretKey        string         `json:"-"`
 	APIFormat        string         `json:"apiFormat" gorm:"size:24"`
 	ConcurrencyLimit int            `json:"concurrencyLimit"`

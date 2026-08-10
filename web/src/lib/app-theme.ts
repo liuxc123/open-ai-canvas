@@ -57,7 +57,7 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
             colorLink: color.primary,
             colorLinkHover: color.primaryHover,
             colorLinkActive: color.primary,
-            colorTextLightSolid: color.primaryText,
+            colorTextLightSolid: dark ? "rgba(255, 255, 255, 0.85)" : "#ffffff",
             colorBgElevated: elevatedBackground,
             colorBorderSecondary: dark ? "rgba(255, 255, 255, 0.1)" : "rgba(17, 17, 17, 0.09)",
             boxShadowSecondary: dark ? "0 24px 72px rgba(0, 0, 0, 0.48)" : "0 22px 64px rgba(15, 23, 42, 0.14)",

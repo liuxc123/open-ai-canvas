@@ -813,9 +813,10 @@ func rollingActiveUsers(activities []model.UserDailyActivity, tasks []model.Task
 func successRateLogs(logs []model.ApiCallLog) float64 {
 	succeeded, failed := 0, 0
 	for _, log := range logs {
-		if log.Status == model.ApiCallStatusSucceeded {
+		switch log.Status {
+		case model.ApiCallStatusSucceeded:
 			succeeded++
-		} else if log.Status == model.ApiCallStatusFailed {
+		case model.ApiCallStatusFailed:
 			failed++
 		}
 	}

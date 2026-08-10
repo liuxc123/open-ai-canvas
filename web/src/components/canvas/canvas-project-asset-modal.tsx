@@ -4,9 +4,13 @@ import { Check, FileText, Image as ImageIcon, Music2, UserRound, Video } from "l
 
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { AssetMediaPreview } from "@/components/asset-media-preview";
+import { SeedanceAssetStatus } from "@/components/canvas/seedance-asset-status";
+import { useSeedanceAssetStatus, useRegisterSeedanceAsset } from "@/services/api/seedance-asset";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { compileCharacterReferencePrompt } from "@/lib/canvas/canvas-character-reference";
 import { resourceFileUrl } from "@/services/api/resources";
+import { useEffectiveConfig, resolveModelChannel } from "@/stores/use-config-store";
+import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import type { ProjectAsset, ProjectDetail } from "@/services/api/projects";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
@@ -67,7 +71,17 @@ function ProjectAssetCard({ item, selected, onToggle }: { item: ProjectPickerIte
     const Icon = character ? UserRound : media?.kind === "video" ? Video : media?.kind === "audio" ? Music2 : media?.kind === "text" ? FileText : ImageIcon;
     const label = character ? "角色卡" : media?.kind === "video" ? "视频" : media?.kind === "audio" ? "音频" : media?.kind === "text" ? "文本" : "图片";
     const title = character?.title || media?.title || "未命名资产";
-    return <button type="button" onClick={onToggle} className={`relative min-w-0 overflow-hidden rounded-md border text-left transition-colors ${selected ? "border-[var(--workspace-accent)] bg-[var(--workspace-accent-soft)]" : "border-border/80 hover:border-foreground/30"}`}><div className="relative aspect-[4/3] overflow-hidden bg-foreground/[.04]">{cover ? <img src={cover} alt={title} loading="lazy" decoding="async" className="h-full w-full object-contain p-1" /> : <AssetMediaPreview asset={media} alt={title} className="h-full w-full bg-black object-cover" fallback={<div className="grid h-full place-items-center text-foreground/25"><Icon className="size-7" /></div>} />}<span className={`absolute right-1.5 top-1.5 grid size-5 place-items-center rounded border ${selected ? "border-[var(--workspace-accent)] bg-[var(--workspace-accent)] text-white" : "border-white/60 bg-black/25 text-transparent backdrop-blur"}`}><Check className="size-3" /></span><span className="absolute bottom-1.5 left-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[var(--fs-micro)] text-white">{label}</span></div><div className="px-2 py-1.5"><div className="truncate text-[var(--fs-label)] font-medium">{title}</div>{character ? <div className="mt-0.5 truncate text-[var(--fs-micro)] text-foreground/42">{character.character?.visualStatus === "ready" ? "形象就绪" : "形象待完善"} · {character.character?.voiceStatus === "ready" ? "声音已绑定" : "声音未绑定"}</div> : null}</div></button>;
+
+    const globalConfig = useEffectiveConfig();
+    const seedanceChannel = resolveModelChannel(globalConfig, globalConfig.model);
+    const seedanceChannelId = isSeedanceVideoConfig(globalConfig) && seedanceChannel.scope === "system" ? seedanceChannel.id : undefined;
+    const storageKey = media && "data" in media ? (media.data as { storageKey?: string }).storageKey : undefined;
+    const resourceId = typeof storageKey === "string" && storageKey.startsWith("resource:") ? storageKey.replace("resource:", "") : undefined;
+    const showSeedance = Boolean(seedanceChannelId && resourceId && (media?.kind === "image" || media?.kind === "video" || media?.kind === "audio"));
+    const { data: seedanceAsset } = useSeedanceAssetStatus(showSeedance ? resourceId : undefined, seedanceChannelId);
+    const register = useRegisterSeedanceAsset();
+
+    return <button type="button" onClick={onToggle} className={`relative min-w-0 overflow-hidden rounded-md border text-left transition-colors ${selected ? "border-[var(--workspace-accent)] bg-[var(--workspace-accent-soft)]" : "border-border/80 hover:border-foreground/30"}`}><div className="relative aspect-[4/3] overflow-hidden bg-foreground/[.04]">{cover ? <img src={cover} alt={title} loading="lazy" decoding="async" className="h-full w-full object-contain p-1" /> : <AssetMediaPreview asset={media} alt={title} className="h-full w-full bg-black object-cover" fallback={<div className="grid h-full place-items-center text-foreground/25"><Icon className="size-7" /></div>} />}<span className={`absolute right-1.5 top-1.5 grid size-5 place-items-center rounded border ${selected ? "border-[var(--workspace-accent)] bg-[var(--workspace-accent)] text-white" : "border-white/60 bg-black/25 text-transparent backdrop-blur"}`}><Check className="size-3" /></span><span className="absolute bottom-1.5 left-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[var(--fs-micro)] text-white">{label}</span></div><div className="px-2 py-1.5"><div className="truncate text-[var(--fs-label)] font-medium">{title}</div>{character ? <div className="mt-0.5 truncate text-[var(--fs-micro)] text-foreground/42">{character.character?.visualStatus === "ready" ? "形象就绪" : "形象待完善"} · {character.character?.voiceStatus === "ready" ? "声音已绑定" : "声音未绑定"}</div> : null}{showSeedance ? <div className="mt-0.5"><SeedanceAssetStatus status={(seedanceAsset?.status ?? "unregistered") as never} onRetry={resourceId && seedanceChannelId ? () => register.mutate({ resourceId, channelId: seedanceChannelId }) : undefined} /></div> : null}</div></button>;
 }
 
 function toInsertPayload(item: ProjectPickerItem): InsertAssetPayload {

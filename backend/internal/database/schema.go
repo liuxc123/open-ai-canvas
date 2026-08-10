@@ -61,6 +61,7 @@ func Models() []any {
 		&model.TaskLog{},
 		&model.SessionFile{},
 		&model.Result{},
+		&model.SeedanceAsset{},
 	}
 }
 

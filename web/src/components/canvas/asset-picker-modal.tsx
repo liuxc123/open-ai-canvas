@@ -4,6 +4,10 @@ import { Search } from "lucide-react";
 
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { AssetMediaPreview } from "@/components/asset-media-preview";
+import { SeedanceAssetStatus } from "@/components/canvas/seedance-asset-status";
+import { useSeedanceAssetStatus, useRegisterSeedanceAsset } from "@/services/api/seedance-asset";
+import { useEffectiveConfig, resolveModelChannel } from "@/stores/use-config-store";
+import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
@@ -41,8 +45,13 @@ const kindOptions = [
     { label: "音频", value: "audio" },
 ];
 
-function PickerCard({ asset, onClick }: { asset: InsertableAsset; onClick: () => void }) {
+function PickerCard({ asset, onClick, channelId }: { asset: InsertableAsset; onClick: () => void; channelId?: string }) {
     const { title, kind } = asset;
+    const storageKey = "data" in asset ? (asset.data as { storageKey?: string }).storageKey : undefined;
+    const resourceId = typeof storageKey === "string" && storageKey.startsWith("resource:") ? storageKey.replace("resource:", "") : undefined;
+    const { data: seedanceAsset } = useSeedanceAssetStatus(resourceId, channelId);
+    const register = useRegisterSeedanceAsset();
+    const showSeedance = Boolean(channelId && resourceId && (kind === "image" || kind === "video" || kind === "audio"));
     return (
         <button
             type="button"
@@ -55,6 +64,14 @@ function PickerCard({ asset, onClick }: { asset: InsertableAsset; onClick: () =>
                     <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{title}</span>
                     <Tag className="m-0 shrink-0 text-[var(--fs-tiny)]">{kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "文本"}</Tag>
                 </div>
+                {showSeedance ? (
+                    <div className="mt-1">
+                        <SeedanceAssetStatus
+                            status={(seedanceAsset?.status ?? "unregistered") as never}
+                            onRetry={resourceId && channelId ? () => register.mutate({ resourceId, channelId }) : undefined}
+                        />
+                    </div>
+                ) : null}
             </div>
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-stone-950/0 text-sm font-medium text-white opacity-0 transition group-hover:bg-stone-950/55 group-hover:opacity-100">插入</div>
         </button>
@@ -66,6 +83,9 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState("all");
     const [page, setPage] = useState(1);
+    const globalConfig = useEffectiveConfig();
+    const seedanceChannel = resolveModelChannel(globalConfig, globalConfig.model);
+    const seedanceChannelId = isSeedanceVideoConfig(globalConfig) && seedanceChannel.scope === "system" ? seedanceChannel.id : undefined;
 
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
@@ -129,7 +149,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
             {visible.length ? (
                 <div className="grid grid-cols-4 gap-3">
                     {visible.map((asset) => (
-                        <PickerCard key={asset.id} asset={asset} onClick={() => handleInsert(asset)} />
+                        <PickerCard key={asset.id} asset={asset} onClick={() => handleInsert(asset)} channelId={seedanceChannelId} />
                     ))}
                 </div>
             ) : (

@@ -16,6 +16,8 @@ export type ModelChannel = {
     id: string;
     name: string;
     baseUrl: string;
+    materialBaseUrl?: string;
+    materialApiVersion?: string;
     apiKey: string;
     secretKey?: string;
     headers?: ChannelHeader[];
@@ -44,6 +46,8 @@ export type ModelChannel = {
 export type AiConfig = {
     channelMode: "remote" | "local";
     baseUrl: string;
+    materialBaseUrl?: string;
+    materialApiVersion?: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
     channels: ModelChannel[];
@@ -344,6 +348,8 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         id: channel?.id?.trim() || nanoid(),
         name: channel?.name?.trim() || "新渠道",
         baseUrl: providedBaseUrl || (interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat)),
+        materialBaseUrl: channel?.materialBaseUrl?.trim() || "",
+        materialApiVersion: channel?.materialApiVersion?.trim() || "",
         apiKey: channel?.apiKey || "",
         secretKey: channel?.secretKey || "",
         headers: Array.isArray(channel?.headers) ? channel.headers.map((header) => ({ name: String(header.name || ""), value: String(header.value || "") })) : [],
@@ -437,6 +443,8 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         ...config,
         model,
         baseUrl: channel.baseUrl,
+        materialBaseUrl: channel.materialBaseUrl,
+        materialApiVersion: channel.materialApiVersion,
         apiKey: channel.apiKey,
         secretKey: channel.secretKey,
         headers: channel.headers,

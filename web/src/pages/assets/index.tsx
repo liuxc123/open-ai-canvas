@@ -16,6 +16,10 @@ import { uploadMediaFile } from "@/services/file-storage";
 import { useAssetStore, type Asset, type AssetCategory, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { deleteAssetWithRemoteSync } from "@/services/user-data-sync";
+import { SeedanceAssetStatus } from "@/components/canvas/seedance-asset-status";
+import { useSeedanceAssetStatus, useRegisterSeedanceAsset } from "@/services/api/seedance-asset";
+import { useEffectiveConfig, resolveModelChannel } from "@/stores/use-config-store";
+import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 
 type LibraryAsset = Exclude<Asset, { kind: "entity" }>;
 
@@ -432,6 +436,14 @@ export default function AssetsPage() {
 
 function AssetCard({ asset, selected, onSelect, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: LibraryAsset; selected: boolean; onSelect: (selected: boolean) => void; onOpen: () => void; onEdit: () => void; onCopy: (asset: LibraryAsset) => void; onDownload: (asset: LibraryAsset) => void; onDelete: () => void }) {
     const summary = assetSummary(asset);
+    const globalConfig = useEffectiveConfig();
+    const seedanceChannel = resolveModelChannel(globalConfig, globalConfig.model);
+    const seedanceChannelId = isSeedanceVideoConfig(globalConfig) && seedanceChannel.scope === "system" ? seedanceChannel.id : undefined;
+    const storageKey = "data" in asset ? (asset.data as { storageKey?: string }).storageKey : undefined;
+    const resourceId = typeof storageKey === "string" && storageKey.startsWith("resource:") ? storageKey.replace("resource:", "") : undefined;
+    const showSeedance = Boolean(seedanceChannelId && resourceId && (asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"));
+    const { data: seedanceAsset } = useSeedanceAssetStatus(showSeedance ? resourceId : undefined, seedanceChannelId);
+    const register = useRegisterSeedanceAsset();
     return (
         <AssetLibraryCard selected={selected}>
             <AssetLibraryCardMedia className="relative overflow-hidden bg-foreground/[.045]">
@@ -469,6 +481,14 @@ function AssetCard({ asset, selected, onSelect, onOpen, onEdit, onCopy, onDownlo
                     <span aria-hidden="true">·</span>
                     <span className="truncate">{assetProjectLabel(asset)}</span>
                 </div>
+                {showSeedance ? (
+                    <div className="mt-1.5">
+                        <SeedanceAssetStatus
+                            status={(seedanceAsset?.status ?? "unregistered") as never}
+                            onRetry={resourceId && seedanceChannelId ? () => register.mutate({ resourceId, channelId: seedanceChannelId }) : undefined}
+                        />
+                    </div>
+                ) : null}
             </button>
         </AssetLibraryCard>
     );

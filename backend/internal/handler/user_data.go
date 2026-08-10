@@ -444,6 +444,107 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"id": c.Param("id")})
 	})
+
+	// ===== Seedance 资产管理 =====
+	r.POST("/seedance/assets/register", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+		var req service.SeedanceRegisterRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		asset, err := svc.RegisterSeedanceAsset(c.Request.Context(), user.ID, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"asset": asset})
+	})
+
+	r.POST("/seedance/assets/register-batch", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256<<10)
+		var req service.SeedanceRegisterBatchRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		results, err := svc.RegisterSeedanceAssetsBatch(c.Request.Context(), user.ID, req.Items)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"results": results})
+	})
+
+	r.GET("/seedance/assets", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		channelID := strings.TrimSpace(c.Query("channelId"))
+		model := strings.TrimSpace(c.Query("model"))
+		var resourceIDs []string
+		if raw := strings.TrimSpace(c.Query("resourceIds")); raw != "" {
+			for _, id := range strings.Split(raw, ",") {
+				if id = strings.TrimSpace(id); id != "" {
+					resourceIDs = append(resourceIDs, id)
+				}
+			}
+		}
+		assets, err := svc.ListUserSeedanceAssets(c.Request.Context(), user.ID, channelID, resourceIDs, model)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"assets": assets})
+	})
+
+	r.GET("/seedance/assets/:id", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		channelID := strings.TrimSpace(c.Query("channelId"))
+		model := strings.TrimSpace(c.Query("model"))
+		asset, err := svc.GetSeedanceAsset(c.Request.Context(), user.ID, c.Param("id"), channelID, model)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"asset": asset})
+	})
+
+	r.POST("/seedance/assets/:id/verify", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+		var req struct {
+			ChannelID string `json:"channelId"`
+			Model     string `json:"model"`
+		}
+		_ = c.ShouldBindJSON(&req)
+		asset, err := svc.VerifySeedanceAsset(c.Request.Context(), user.ID, c.Param("id"), req.ChannelID, req.Model)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"asset": asset})
+	})
 }
 
 func resourceResponseETag(resource *model.Resource) string {
