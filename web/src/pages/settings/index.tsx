@@ -393,7 +393,7 @@ export default function SettingsPage() {
                                                                 onBlur={(event) => updateChannel(channel.id, { baseUrl: event.target.value.trim().replace(/\/+$/, "") })}
                                                             />
                                                         </Form.Item>
-                                                        <Form.Item label="API Key" htmlFor={`channel-${channel.id}-api-key`} className="mb-0 lg:col-span-5">
+                                                        <Form.Item label="API Key" htmlFor={`channel-${channel.id}-api-key`} className="mb-0 lg:col-span-6">
                                                             <Input.Password
                                                                 id={`channel-${channel.id}-api-key`}
                                                                 autoComplete="new-password"
@@ -403,7 +403,7 @@ export default function SettingsPage() {
                                                                 onBlur={(event) => updateChannel(channel.id, { apiKey: event.target.value.trim() })}
                                                             />
                                                         </Form.Item>
-                                                        <Form.Item label="Secret Key（可选）" htmlFor={`channel-${channel.id}-secret-key`} className="mb-0 lg:col-span-5" extra="即梦等 AK/SK 协议需要；其他协议留空。">
+                                                        <Form.Item label="Secret Key（可选）" htmlFor={`channel-${channel.id}-secret-key`} className="mb-0 lg:col-span-6" extra="即梦等 AK/SK 协议需要；其他协议留空。">
                                                             <Input.Password
                                                                 id={`channel-${channel.id}-secret-key`}
                                                                 autoComplete="new-password"
@@ -413,7 +413,26 @@ export default function SettingsPage() {
                                                                 onBlur={(event) => updateChannel(channel.id, { secretKey: event.target.value.trim() })}
                                                             />
                                                         </Form.Item>
-                                                        <Form.Item label="模型列表" htmlFor={`channel-${channel.id}-models`} className="mb-0 lg:col-span-7">
+                                                        <Form.Item label="资产注册 API 地址（可选）" htmlFor={`channel-${channel.id}-material-base-url`} className="mb-0 lg:col-span-8" extra="Seedance 等模型要求素材先注册；留空时回退到 Base URL。">
+                                                            <Input
+                                                                id={`channel-${channel.id}-material-base-url`}
+                                                                inputMode="url"
+                                                                value={channel.materialBaseUrl || ""}
+                                                                placeholder="留空则使用 Base URL"
+                                                                onChange={(event) => updateChannel(channel.id, { materialBaseUrl: event.target.value })}
+                                                                onBlur={(event) => updateChannel(channel.id, { materialBaseUrl: event.target.value.trim().replace(/\/+$/, "") })}
+                                                            />
+                                                        </Form.Item>
+                                                        <Form.Item label="资产 API 版本（可选）" htmlFor={`channel-${channel.id}-material-api-version`} className="mb-0 lg:col-span-4" extra="默认 v1；修改后强制重新注册。">
+                                                            <Input
+                                                                id={`channel-${channel.id}-material-api-version`}
+                                                                value={channel.materialApiVersion || ""}
+                                                                placeholder="v1"
+                                                                onChange={(event) => updateChannel(channel.id, { materialApiVersion: event.target.value })}
+                                                                onBlur={(event) => updateChannel(channel.id, { materialApiVersion: event.target.value.trim() })}
+                                                            />
+                                                        </Form.Item>
+                                                        <Form.Item label="模型列表" htmlFor={`channel-${channel.id}-models`} className="mb-0 lg:col-span-12">
                                                             <Select
                                                                 id={`channel-${channel.id}-models`}
                                                                 mode="tags"

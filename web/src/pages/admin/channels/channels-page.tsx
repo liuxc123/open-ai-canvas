@@ -15,7 +15,7 @@ import { AdminPageFrame } from "../components/admin-shell";
 import { AdminRowActions, AdminTableEmpty, AdminTableSkeleton, configuredSecretText } from "../components/admin-ui";
 import { ChannelModelManager } from "../components/channel-model-manager";
 
-type ChannelFormValues = { name: string; baseUrl: string; apiKey?: string; secretKey?: string; headers?: ChannelHeader[]; useGlobalConcurrency?: boolean; concurrencyLimit?: number; enabled?: boolean };
+type ChannelFormValues = { name: string; baseUrl: string; materialBaseUrl?: string; materialApiVersion?: string; apiKey?: string; secretKey?: string; headers?: ChannelHeader[]; useGlobalConcurrency?: boolean; concurrencyLimit?: number; enabled?: boolean };
 
 export default function ChannelsPage() {
     const { message, modal } = App.useApp();
@@ -80,7 +80,7 @@ export default function ChannelsPage() {
     const openDrawer = (channel?: ModelChannel) => {
         setEditingChannel(channel || null);
         form.resetFields();
-        form.setFieldsValue(channel ? { name: channel.name, baseUrl: channel.baseUrl, apiKey: "", secretKey: "", headers: channel.headers || [], useGlobalConcurrency: !channel.concurrencyLimit, concurrencyLimit: channel.concurrencyLimit || undefined, enabled: channel.enabled !== false } : { name: "", baseUrl: "", apiKey: "", secretKey: "", headers: [], useGlobalConcurrency: true, concurrencyLimit: undefined, enabled: true });
+        form.setFieldsValue(channel ? { name: channel.name, baseUrl: channel.baseUrl, materialBaseUrl: channel.materialBaseUrl || "", materialApiVersion: channel.materialApiVersion || "", apiKey: "", secretKey: "", headers: channel.headers || [], useGlobalConcurrency: !channel.concurrencyLimit, concurrencyLimit: channel.concurrencyLimit || undefined, enabled: channel.enabled !== false } : { name: "", baseUrl: "", materialBaseUrl: "", materialApiVersion: "", apiKey: "", secretKey: "", headers: [], useGlobalConcurrency: true, concurrencyLimit: undefined, enabled: true });
         setDrawerOpen(true);
     };
 
@@ -106,7 +106,7 @@ export default function ChannelsPage() {
         }
         setSaving(true);
         try {
-            const payload = { name: values.name.trim(), baseUrl: values.baseUrl.trim(), apiKey: values.apiKey?.trim() || "", secretKey: values.secretKey?.trim() || "", headers: values.headers || [], useGlobalConcurrency: values.useGlobalConcurrency !== false, concurrencyLimit: values.useGlobalConcurrency === false ? values.concurrencyLimit : undefined, enabled: values.enabled !== false };
+            const payload = { name: values.name.trim(), baseUrl: values.baseUrl.trim(), materialBaseUrl: values.materialBaseUrl?.trim() || "", materialApiVersion: values.materialApiVersion?.trim() || "", apiKey: values.apiKey?.trim() || "", secretKey: values.secretKey?.trim() || "", headers: values.headers || [], useGlobalConcurrency: values.useGlobalConcurrency !== false, concurrencyLimit: values.useGlobalConcurrency === false ? values.concurrencyLimit : undefined, enabled: values.enabled !== false };
             await (editingChannel ? updateAdminChannel(editingChannel.id, payload) : createAdminChannel(payload));
             await syncChannels();
             setDrawerOpen(false);
@@ -170,6 +170,8 @@ export default function ChannelsPage() {
                     <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true, message: "请填写 Base URL" }]}><Input placeholder="填写渠道 Base URL" /></Form.Item>
                     <Form.Item name="apiKey" label={editingChannel ? `API Key / Access Key（${configuredSecretText}）` : "API Key / Access Key"} rules={editingChannel ? [] : [{ required: true, message: "请填写 API Key 或 Access Key" }]} extra="OpenAI 兼容协议填写 API Key；即梦官方协议填写 IAM Access Key。"><Input.Password autoComplete="new-password" placeholder={editingChannel ? "留空保留原凭证" : "API Key 或 Access Key"} /></Form.Item>
                     <Form.Item name="secretKey" label={editingChannel ? `Secret Key（${channelSecretText(editingChannel)}）` : "Secret Key（可选）"} extra="仅即梦官方等 AK/SK 签名协议需要；其他渠道留空。"><Input.Password autoComplete="new-password" placeholder={editingChannel ? "留空保留原 Secret Key" : "IAM Secret Key"} /></Form.Item>
+                    <Form.Item name="materialBaseUrl" label="资产注册 API 地址（可选）" extra="Seedance 等模型要求素材先注册；留空时回退到 Base URL。例如 https://seedance.ai-tokens.app"><Input placeholder="留空则使用 Base URL" /></Form.Item>
+                    <Form.Item name="materialApiVersion" label="资产 API 协议版本（可选）" extra="默认 v1；修改后会强制所有素材重新注册。"><Input placeholder="v1" /></Form.Item>
                     <div className="mb-6"><Form.Item name="headers" noStyle><ChannelHeadersEditor /></Form.Item></div>
                     <Form.Item name="useGlobalConcurrency" label="跟随系统并发配置" valuePropName="checked"><Switch /></Form.Item>
                     <Form.Item name="concurrencyLimit" label="渠道最大并发数" extra="后台任务和系统代理请求共享该渠道上限；槽位暂满时请求会等待。" rules={useGlobalConcurrency ? [] : [{ required: true, message: "请填写渠道最大并发数" }, { type: "number", min: 1, max: 999, message: "请输入 1-999 的整数" }]}><InputNumber className="w-full" min={1} max={999} precision={0} disabled={useGlobalConcurrency} placeholder={useGlobalConcurrency ? "使用系统默认值" : "1-999"} /></Form.Item>

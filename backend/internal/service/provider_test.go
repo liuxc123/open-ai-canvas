@@ -372,15 +372,15 @@ func TestTextChatContentIncludesReferenceMedia(t *testing.T) {
 	}
 }
 
-func TestTextReferenceImageRejectsInternalAssetURL(t *testing.T) {
+func TestTextReferenceImageAcceptsAssetURL(t *testing.T) {
 	_, err := textResponseInput(canvasGenerationInput{
 		Prompt: "describe this image",
 		ReferenceImages: []providerMedia{
 			{ID: "image-1", Name: "image.png", URL: "asset://local-image"},
 		},
 	})
-	if err == nil {
-		t.Fatal("textResponseInput() error = nil, want error")
+	if err != nil {
+		t.Fatalf("textResponseInput() error = %v, want nil (asset:// is valid after Seedance registration)", err)
 	}
 }
 

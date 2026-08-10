@@ -17,6 +17,7 @@ import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
+import { SeedanceVideoPrecheck, useSeedanceVideoPrecheckBlocking } from "./seedance-video-precheck";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
@@ -79,6 +80,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const composerMinHeight = activeReferenceCount ? 82 : 58;
     const composerHeight = Math.min(224, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
     const isSubmitDisabled = !isRunning && !prompt.trim();
+    const seedanceBlock = useSeedanceVideoPrecheckBlocking(mentionReferences, config);
+    const isSeedanceBlocked = mode === "video" && seedanceBlock.blocked && !isRunning;
     const canExpandPrompt = mode === "image" || mode === "video";
     const isPortraitTexture = mode === "image" && Boolean(node.metadata?.portraitTexture);
     const updatePromptContentHeight = useCallback((height: number) => {
@@ -176,22 +179,25 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 <span className="min-w-0 truncate px-2 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
                     {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
                 </span>
-                <Button
-                    type="text"
-                    className="!inline-flex !h-8 shrink-0 !items-center !gap-1 !rounded-full !px-2.5 !text-[var(--fs-tiny)] !font-medium"
-                    danger={isRunning}
-                    disabled={isSubmitDisabled}
-                    style={{
-                        background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : monochromeAccent,
-                        color: isSubmitDisabled ? theme.node.faint : isRunning ? "#ffffff" : theme.canvas.background,
-                        boxShadow: isSubmitDisabled ? "none" : `0 8px 20px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.18)`,
-                    }}
-                    onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
-                    aria-label={isRunning ? "停止生成" : "生成"}
-                >
-                    {isRunning ? <Square className="size-2.5 fill-current" /> : <ArrowUp className="size-3" />}
-                    {isRunning ? "停止" : "生成"}
-                </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                    {mode === "video" ? <SeedanceVideoPrecheck references={mentionReferences} config={config} /> : null}
+                    <Button
+                        type="text"
+                        className="!inline-flex !h-8 shrink-0 !items-center !gap-1 !rounded-full !px-2.5 !text-[var(--fs-tiny)] !font-medium"
+                        danger={isRunning}
+                        disabled={isSubmitDisabled || isSeedanceBlocked}
+                        style={{
+                            background: isSubmitDisabled || isSeedanceBlocked ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : monochromeAccent,
+                            color: isSubmitDisabled || isSeedanceBlocked ? theme.node.faint : isRunning ? "#ffffff" : theme.canvas.background,
+                            boxShadow: isSubmitDisabled || isSeedanceBlocked ? "none" : `0 8px 20px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.18)`,
+                        }}
+                        onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
+                        aria-label={isRunning ? "停止生成" : "生成"}
+                    >
+                        {isRunning ? <Square className="size-2.5 fill-current" /> : <ArrowUp className="size-3" />}
+                        {isRunning ? "停止" : "生成"}
+                    </Button>
+                </div>
             </div>
         ) : (
             <div className="flex min-w-0 items-center justify-between gap-0.5 p-1" style={{ background: controlsSurface }}>
@@ -230,17 +236,18 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))}
                         />
                     ) : null}
+                    {mode === "video" ? <SeedanceVideoPrecheck references={mentionReferences} config={config} /> : null}
                     {creditsEnabled ? <GenerationCostBadge credits={credits} theme={theme} /> : null}
                     <Button
                         type="text"
                         className="!inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !rounded-full !border !p-0 transition hover:!-translate-y-px hover:!brightness-110 motion-reduce:hover:!translate-y-0"
                         danger={isRunning}
-                        disabled={isSubmitDisabled}
+                        disabled={isSubmitDisabled || isSeedanceBlocked}
                         style={{
-                            background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : monochromeAccent,
-                            borderColor: isSubmitDisabled ? insetBorder : monochromeAccent,
-                            color: isSubmitDisabled ? theme.node.faint : theme.canvas.background,
-                            boxShadow: isSubmitDisabled ? "none" : `0 8px 20px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.18)`,
+                            background: isSubmitDisabled || isSeedanceBlocked ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : monochromeAccent,
+                            borderColor: isSubmitDisabled || isSeedanceBlocked ? insetBorder : monochromeAccent,
+                            color: isSubmitDisabled || isSeedanceBlocked ? theme.node.faint : theme.canvas.background,
+                            boxShadow: isSubmitDisabled || isSeedanceBlocked ? "none" : `0 8px 20px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.18)`,
                         }}
                         onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
                         aria-label={isRunning ? "停止生成" : "生成"}

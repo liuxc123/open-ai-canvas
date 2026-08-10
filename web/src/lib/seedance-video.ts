@@ -160,3 +160,122 @@ export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
 }
 
 export const seedanceVideoReferenceHint = "参考视频需为 mp4/mov，H.264/H.265，FPS 24-60；含真人人脸素材请使用火山授权 asset:// 素材。";
+
+// ===== Seedance 资产预注册 =====
+
+/**
+ * 在前端直接调用 Seedance API 前，确保所有参考素材已注册并通过审核。
+ * 注册流程：POST /api/seedance/assets/register-batch -> 轮询 GET /api/seedance/assets
+ * 注册成功后，将素材 URL 替换为 asset://upstreamAssetId。
+ */
+export async function ensureSeedanceAssetsRegistered(
+    config: AiConfig,
+    references: ReferenceImage[],
+    videoReferences: ReferenceVideo[],
+    audioReferences: ReferenceAudio[],
+): Promise<{ references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[] }> {
+    const requestConfig = resolveModelRequestConfig(config, (config.model || config.videoModel).trim());
+    if (!isSeedanceVideoConfig(requestConfig) || requestConfig.channelId === "") {
+        return { references, videoReferences, audioReferences };
+    }
+
+    // 收集所有需要注册的素材 resourceId
+    const allMedia: Array<{ kind: "image" | "video" | "audio"; resourceId: string; ref: ReferenceImage | ReferenceVideo | ReferenceAudio }> = [];
+    for (const img of references) {
+        const id = extractResourceId(img.storageKey);
+        if (id) allMedia.push({ kind: "image", resourceId: id, ref: img });
+    }
+    for (const vid of videoReferences) {
+        const id = extractResourceId(vid.storageKey);
+        if (id) allMedia.push({ kind: "video", resourceId: id, ref: vid });
+    }
+    for (const aud of audioReferences) {
+        const id = extractResourceId(aud.storageKey);
+        if (id) allMedia.push({ kind: "audio", resourceId: id, ref: aud });
+    }
+
+    if (allMedia.length === 0) return { references, videoReferences, audioReferences };
+
+    const { apiClient, request } = await import("@/services/api/request");
+
+    // 1. 批量注册
+    const items = allMedia.map((m) => ({ resourceId: m.resourceId, channelId: requestConfig.channelId, model: requestConfig.model }));
+    const registerResp = await request<{ results: Array<{ resourceId: string; asset?: { upstreamAssetId: string; status: string }; error?: string }> }>(
+        apiClient.post("/seedance/assets/register-batch", { items }),
+    );
+
+    // 检查是否有注册失败的
+    const failed = registerResp.results.filter((r) => r.error);
+    if (failed.length > 0) {
+        throw new Error(`素材注册失败：${failed.map((f) => f.resourceId).join(", ")}`);
+    }
+
+    // 2. 轮询等待所有素材终态
+    const resourceIds = allMedia.map((m) => m.resourceId);
+    const deadline = Date.now() + 5 * 60 * 1000; // 5 分钟超时
+    const assetMap = new Map<string, { upstreamAssetId: string; status: string }>();
+
+    for (const r of registerResp.results) {
+        if (r.asset) assetMap.set(r.resourceId, { upstreamAssetId: r.asset.upstreamAssetId, status: r.asset.status });
+    }
+
+    while (Date.now() < deadline) {
+        const pending = resourceIds.filter((id) => {
+            const a = assetMap.get(id);
+            return !a || a.status === "submitting" || a.status === "submitted" || a.status === "processing";
+        });
+        if (pending.length === 0) break;
+
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        const assetsResp = await request<{ assets: Array<{ resourceId: string; upstreamAssetId: string; status: string }> }>(
+            apiClient.get("/seedance/assets", { params: { channelId: requestConfig.channelId, resourceIds: resourceIds.join(",") } }),
+        );
+        for (const a of assetsResp.assets) {
+            assetMap.set(a.resourceId, { upstreamAssetId: a.upstreamAssetId, status: a.status });
+        }
+    }
+
+    // 3. 检查结果
+    const failedAssets = resourceIds.filter((id) => {
+        const a = assetMap.get(id);
+        return !a || a.status !== "approved";
+    });
+    if (failedAssets.length > 0) {
+        const failedNames = failedAssets.map((id) => {
+            const m = allMedia.find((x) => x.resourceId === id);
+            return (m?.ref as { title?: string })?.title || id;
+        });
+        throw new Error(`素材审核未通过：${failedNames.join(", ")}`);
+    }
+
+    // 4. 替换 URL 为 asset://upstreamAssetId
+    const newReferences = references.map((img) => {
+        const id = extractResourceId(img.storageKey);
+        if (!id) return img;
+        const a = assetMap.get(id);
+        if (!a) return img;
+        return { ...img, url: `asset://${a.upstreamAssetId}`, dataUrl: "" };
+    });
+    const newVideoReferences = videoReferences.map((vid) => {
+        const id = extractResourceId(vid.storageKey);
+        if (!id) return vid;
+        const a = assetMap.get(id);
+        if (!a) return vid;
+        return { ...vid, url: `asset://${a.upstreamAssetId}` };
+    });
+    const newAudioReferences = audioReferences.map((aud) => {
+        const id = extractResourceId(aud.storageKey);
+        if (!id) return aud;
+        const a = assetMap.get(id);
+        if (!a) return aud;
+        return { ...aud, url: `asset://${a.upstreamAssetId}` };
+    });
+
+    return { references: newReferences, videoReferences: newVideoReferences, audioReferences: newAudioReferences };
+}
+
+function extractResourceId(storageKey?: string): string | undefined {
+    if (!storageKey || !storageKey.startsWith("resource:")) return undefined;
+    return storageKey.replace("resource:", "");
+}

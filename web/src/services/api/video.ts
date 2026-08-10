@@ -7,7 +7,7 @@ import { getResourceOSSUrl } from "@/services/api/resources";
 import { channelRequest } from "@/services/api/custom-channel-relay";
 import { imageToDataUrl } from "@/services/image-storage";
 import { modelCapabilityConfigFor, videoDurationAllowed } from "@/lib/model-capabilities";
-import { boolConfig, buildSeedancePromptText, isArkPlanBaseUrl, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { boolConfig, buildSeedancePromptText, ensureSeedanceAssetsRegistered, isArkPlanBaseUrl, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, isSystemProxyBaseUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -352,11 +352,13 @@ async function pollOpenAIVideoTask(config: ResolvedAiConfig, task: VideoGenerati
 async function createSeedanceTask(config: ResolvedAiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     assertSeedanceVideoReferences(videoReferences);
     assertSeedanceAudioReferences(audioReferences);
+    // Seedance 资产预注册：确保所有参考素材已注册并通过审核，替换为 asset:// 协议
+    const registered = await ensureSeedanceAssetsRegistered(config, references, videoReferences, audioReferences);
     const isVolcengineArk = config.interfaceType === "volcengine-ark-video";
     const payload =
         isVolcengineArk || isArkPlanBaseUrl(config.baseUrl)
-            ? await buildSeedanceAgentPlanPayload(config, model, prompt, references, videoReferences, audioReferences)
-            : await buildSeedanceVideosPayload(config, model, prompt, references, videoReferences, audioReferences);
+            ? await buildSeedanceAgentPlanPayload(config, model, prompt, registered.references, registered.videoReferences, registered.audioReferences)
+            : await buildSeedanceVideosPayload(config, model, prompt, registered.references, registered.videoReferences, registered.audioReferences);
 
     try {
         const raw = await channelPost<ApiEnvelope<SeedanceTask>>(config, seedanceApiUrl(config), payload, options);
@@ -507,7 +509,7 @@ async function resolveSeedanceImageUrl(config: AiConfig, image: ReferenceImage) 
 
 async function resolveSeedanceVideosImageUrl(image: ReferenceImage) {
     const directUrl = image.url || image.dataUrl;
-    if (isPublicMediaUrl(directUrl) || directUrl.startsWith("data:")) return directUrl;
+    if (isPublicMediaUrl(directUrl) || directUrl.startsWith("asset://") || directUrl.startsWith("data:")) return directUrl;
     const dataUrl = await imageToDataUrl(image);
     if (!dataUrl) throw new Error("参考图读取失败，请换一张图片或重新上传");
     return dataUrl;
@@ -532,7 +534,7 @@ async function resolveSeedanceAudioUrl(audio: ReferenceAudio) {
 }
 
 async function resolveSeedanceVideosMediaUrl(media: ReferenceVideo | ReferenceAudio) {
-    if (isPublicMediaUrl(media.url) || media.url?.startsWith("data:")) return media.url;
+    if (isPublicMediaUrl(media.url) || media.url?.startsWith("asset://") || media.url?.startsWith("data:")) return media.url;
     let blob: Blob | null = null;
     if (media.storageKey) blob = await getMediaBlob(media.storageKey);
     if (!blob && media.url?.startsWith("blob:")) blob = await (await fetch(media.url)).blob();

@@ -63,6 +63,8 @@ type providerConfig struct {
 	AudioInstructions     string                 `json:"audioInstructions"`
 	SystemPrompt          string                 `json:"systemPrompt"`
 	CapabilityConfig      *ModelCapabilityConfig `json:"capabilityConfig"`
+	MaterialBaseURL       string                 `json:"materialBaseUrl,omitempty"`
+	MaterialAPIVersion    string                 `json:"materialApiVersion,omitempty"`
 }
 
 const providerHTTPTimeout = 5 * time.Minute
@@ -214,6 +216,12 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	if resumedProviderRequestID(ctx) == "" {
 		requirePublicURL := input.Config.InterfaceType == "newapi-channel-1" || input.Config.InterfaceType == "newapi-channel-2" || input.Config.InterfaceType == string(model.ChannelInterfaceVolcengineArkVideo)
 		if err := s.hydrateGenerationMedia(userID, &input, requirePublicURL); err != nil {
+			return nil, err
+		}
+	}
+	// Seedance 资产注册：所有参考素材必须先通过 create_asset 注册并验证
+	if isSeedanceVideoConfig(input.Config) || isArkPlanVideoConfig(input.Config) {
+		if err := s.ensureSeedanceAssetsForVideoGeneration(ctx, userID, &input); err != nil {
 			return nil, err
 		}
 	}
@@ -602,6 +610,8 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		config.APIFormat = "openai"
 	}
 	config.BaseURL = channel.BaseURL
+	config.MaterialBaseURL = channel.MaterialBaseURL
+	config.MaterialAPIVersion = channel.MaterialAPIVersion
 	config.APIKey = channel.APIKey
 	config.SecretKey = channel.SecretKey
 	config.Headers, err = ParseOutboundHeadersJSON(channel.HeadersJSON)
@@ -1041,6 +1051,9 @@ func openAIImageInputURL(media providerMedia) (string, error) {
 		return "", errors.New("参考图片 MIME 类型无效，请重新读取或上传图片")
 	}
 	value = strings.TrimSpace(media.URL)
+	if strings.HasPrefix(value, "asset://") {
+		return value, nil
+	}
 	if strings.HasPrefix(value, "data:image/") || isPublicMediaURL(value) {
 		return value, nil
 	}
@@ -1604,7 +1617,7 @@ func runNewAPIChannel2VideoTask(ctx context.Context, input canvasGenerationInput
 		if jsonBytes, marshalErr := json.Marshal(body); marshalErr == nil {
 			log.Printf("[DEBUG] NewAPI Video Generations 任务创建请求：%s", string(jsonBytes))
 		}
-		// return nil, errors.New("[DEBUG] NewAPI Video Generations 任务测试拦截")
+		return nil, errors.New("[DEBUG] NewAPI Video Generations 任务测试拦截")
 		if err := postJSON(ctx, input.Config, "/video/generations", body, &created); err != nil {
 			return nil, err
 		}
@@ -1849,7 +1862,7 @@ func newAPIChannel2VideoMetadata(body newAPIVideoRequest, images, videoURLs, aud
 
 func videoGenerationsMediaURL(media providerMedia) (string, error) {
 	value := strings.TrimSpace(firstNonEmpty(media.URL, media.DataURL))
-	if isPublicMediaURL(value) || strings.HasPrefix(value, "data:") {
+	if isPublicMediaURL(value) || strings.HasPrefix(value, "data:") || strings.HasPrefix(value, "asset://") {
 		return value, nil
 	}
 	return "", errors.New("NewAPI Video Generations 的参考素材需要公网 URL；私有素材请先保存到 OSS")
@@ -3072,6 +3085,9 @@ func seedanceVideosMediaURL(media providerMedia) (string, error) {
 		return value, nil
 	}
 	value = strings.TrimSpace(media.URL)
+	if strings.HasPrefix(value, "asset://") {
+		return value, nil
+	}
 	if strings.HasPrefix(value, "data:") || isPublicMediaURL(value) {
 		return value, nil
 	}
