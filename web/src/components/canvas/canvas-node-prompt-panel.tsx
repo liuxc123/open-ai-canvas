@@ -317,13 +317,14 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 footer={null}
                 centered
                 width={760}
+                zIndex={100}
                 destroyOnHidden
                 onCancel={() => {
                     setExpandedPresetOpen(false);
                     setExpandedPromptOpen(false);
                 }}
                 styles={{
-                    container: { display: "flex", height: "min(440px, calc(100vh - 40px))", flexDirection: "column", borderRadius: 12, border: `1px solid ${shellBorder}`, padding: 0, overflow: "hidden", background: shellSurface, boxShadow: modalShadow },
+                    container: { display: "flex", height: "90vh", flexDirection: "column", borderRadius: 12, border: `1px solid ${shellBorder}`, padding: 0, overflow: "hidden", background: shellSurface, boxShadow: modalShadow },
                     body: { minHeight: 0, flex: 1, padding: 0 },
                 }}
             >
