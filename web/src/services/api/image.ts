@@ -216,8 +216,7 @@ function resolveImageRequestSize(profile: ImageCapabilityConfig, quality: string
     return value ? { parameter: request.parameter, value } : undefined;
 }
 
-function validateImageCapability(profile: ImageCapabilityConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage) {
-    if (Array.from(prompt).length > profile.references.promptMaxChars) throw new Error(`提示词超过当前模型限制（最多 ${profile.references.promptMaxChars} 字）`);
+function validateImageCapability(profile: ImageCapabilityConfig, references: ReferenceImage[], mask?: ReferenceImage) {
     if (references.length > profile.references.maxImages) throw new Error(`当前图片模型最多支持 ${profile.references.maxImages} 张参考图`);
     if (mask && !profile.references.maskSupported) throw new Error("当前图片模型不支持蒙版编辑");
     if (profile.references.maxImageBytes > 0 && references.some((image) => (image.bytes || 0) > profile.references.maxImageBytes)) throw new Error("参考图片文件超过当前模型大小限制");
@@ -811,7 +810,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const selectedModel = config.model || config.imageModel;
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const imageProfile = modelCapabilityConfigFor(config, selectedModel).image!;
-    validateImageCapability(imageProfile, prompt, []);
+    validateImageCapability(imageProfile, []);
     const normalizedImage = normalizeImageValue(imageProfile, config);
     const n = Number(normalizedImage.count);
     if (requestConfig.apiFormat === "gemini") {
@@ -896,7 +895,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const selectedModel = config.model || config.imageModel;
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const imageProfile = modelCapabilityConfigFor(config, selectedModel).image!;
-    validateImageCapability(imageProfile, prompt, references, mask);
+    validateImageCapability(imageProfile, references, mask);
     const normalizedImage = normalizeImageValue(imageProfile, config);
     const n = Number(normalizedImage.count);
     const requestPrompt = buildImageReferencePromptText(prompt, references);
@@ -1096,13 +1095,18 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
     }
 }
 
-export async function fetchChannelModels(channel: ModelChannel, viaBackend = false) {
+export type ChannelModelCatalogItem = { id: string; supportedEndpointTypes?: string[] };
+
+export type ChannelModelFetchResult = { models: string[]; catalog: ChannelModelCatalogItem[] };
+
+export async function fetchChannelModels(channel: ModelChannel, viaBackend = false): Promise<ChannelModelFetchResult> {
     if (!viaBackend) {
-        return fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+        const models = await fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+        return { models, catalog: models.map((id) => ({ id })) };
     }
     try {
         // 登录态由同源后端代取模型目录，避免每个 OpenAI 兼容服务分别维护浏览器 CORS 白名单。
-        const response = await axios.post<{ code?: number; data?: { models?: string[] }; msg?: string }>(
+        const response = await axios.post<{ code?: number; data?: { models?: Array<string | ChannelModelCatalogItem> }; msg?: string }>(
             resolveBackendApiUrl("/api/ai/models"),
             {
                 baseUrl: channel.baseUrl,
@@ -1115,7 +1119,16 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
         if (typeof response.data.code === "number" && response.data.code !== 0) {
             throw new Error(response.data.msg || "读取模型失败");
         }
-        return Array.from(new Set((response.data.data?.models || []).map((model) => model.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+        const catalog = new Map<string, ChannelModelCatalogItem>();
+        for (const item of response.data.data?.models || []) {
+            const entry = typeof item === "string" ? { id: item.trim() } : { id: String(item.id || "").trim(), supportedEndpointTypes: Array.isArray(item.supportedEndpointTypes) ? item.supportedEndpointTypes : undefined };
+            if (!entry.id) continue;
+            const existing = catalog.get(entry.id);
+            catalog.set(entry.id, existing || entry);
+        }
+        const models = Array.from(catalog.keys()).sort((a, b) => a.localeCompare(b));
+        const sortedCatalog = Array.from(catalog.values()).sort((a, b) => a.id.localeCompare(b.id));
+        return { models, catalog: sortedCatalog };
     } catch (error) {
         throw new Error(readAxiosError(error, "读取模型失败"));
     }
