@@ -2,11 +2,13 @@ import { forwardRef, useCallback, useLayoutEffect, useMemo, useRef, useState } f
 import type { CSSProperties, ClipboardEvent, KeyboardEvent, MouseEvent, PointerEvent, TextareaHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
 import { FileText, Image as ImageIcon, Music2, Pencil, Sparkles, UserRound, Video } from "lucide-react";
+import { Popover } from "antd";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { CanvasNodeType } from "@/types/canvas";
+import { ResourcePreviewContent } from "./canvas-resource-preview";
 
 type MentionState = {
     start: number;
@@ -28,6 +30,11 @@ type MentionTextPart =
           token: string;
           reference: CanvasResourceReference;
       };
+
+type ChipPreviewState = {
+    reference: CanvasResourceReference;
+    rect: DOMRect;
+};
 
 type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value"> & {
     value: string;
@@ -55,6 +62,8 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const lastRenderedValueRef = useRef("");
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
+    const [chipPreview, setChipPreview] = useState<ChipPreviewState | null>(null);
+    const chipPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const candidates = useMemo(() => {
         if (!mention) return [];
         const query = mention.query.trim().toLowerCase();
@@ -183,6 +192,33 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         if (typeof cursor === "number") syncMention(serializeEditableValue(editor), cursor);
     };
 
+    const handleChipMouseOver = useCallback((event: MouseEvent<HTMLDivElement>) => {
+        const chip = (event.target as HTMLElement).closest<HTMLElement>("[data-mention-token]");
+        if (!chip) return;
+        const token = chip.dataset.mentionToken!;
+        const reference = activeReferences.find((ref) => canvasResourceMentionToken(ref) === token);
+        if (!reference) return;
+        if (chipPreviewTimerRef.current) clearTimeout(chipPreviewTimerRef.current);
+        chipPreviewTimerRef.current = setTimeout(() => {
+            setChipPreview((prev) => {
+                if (prev && prev.reference.id === reference.id) return prev;
+                return { reference, rect: chip.getBoundingClientRect() };
+            });
+        }, 400);
+    }, [activeReferences]);
+
+    const handleChipMouseOut = useCallback((event: MouseEvent<HTMLDivElement>) => {
+        const chip = (event.target as HTMLElement).closest<HTMLElement>("[data-mention-token]");
+        if (!chip) return;
+        const related = event.relatedTarget as HTMLElement | null;
+        if (related && chip.contains(related)) return;
+        if (related && related.closest<HTMLElement>("[data-mention-token]") === chip) return;
+        if (chipPreviewTimerRef.current) clearTimeout(chipPreviewTimerRef.current);
+        chipPreviewTimerRef.current = setTimeout(() => {
+            setChipPreview(null);
+        }, 150);
+    }, []);
+
     const mergedStyle = {
         ...(style || {}),
         caretColor: style?.color || theme.node.text,
@@ -265,6 +301,8 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                         props.onKeyUp?.(event as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
                     }}
                     onMouseDown={(event) => props.onMouseDown?.(event as unknown as React.MouseEvent<HTMLTextAreaElement>)}
+                    onMouseOver={handleChipMouseOver}
+                    onMouseOut={handleChipMouseOut}
                     onPointerDown={(event) => props.onPointerDown?.(event as unknown as React.PointerEvent<HTMLTextAreaElement>)}
                     onPointerUp={(event) => {
                         syncEditableMentionFromSelection();
@@ -283,6 +321,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     }}
                 ></div>
                 {menu}
+                {chipPreview ? <ChipPreviewPopover preview={chipPreview} theme={theme} onDismiss={() => setChipPreview(null)} onKeep={() => { if (chipPreviewTimerRef.current) clearTimeout(chipPreviewTimerRef.current); }} /> : null}
             </div>
         );
     }
@@ -399,6 +438,34 @@ function createInlinePreview(reference: CanvasResourceReference) {
     return fallback;
 }
 
+function ChipPreviewPopover({ preview, theme, onDismiss, onKeep }: { preview: ChipPreviewState; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onDismiss: () => void; onKeep: () => void }) {
+    const { reference, rect } = preview;
+    const boundary = document.querySelector(".ant-modal-content")?.getBoundingClientRect() || { left: 8, top: 8, right: window.innerWidth - 8, bottom: window.innerHeight - 8 };
+    const gap = 8;
+    const popoverWidth = 280;
+    const popoverMaxHeight = 320;
+    const showRight = rect.right + gap + popoverWidth < boundary.right;
+    const left = showRight ? rect.right + gap : Math.max(boundary.left + 8, rect.left - popoverWidth - gap);
+    const top = clamp(rect.top, boundary.top + 8, boundary.bottom - popoverMaxHeight - 8);
+
+    return createPortal(
+        <div
+            className="canvas-composer-popover-surface fixed z-[var(--z-tooltip)] overflow-hidden rounded-[10px] shadow-2xl"
+            style={{ left, top, background: theme.toolbar.panel, color: theme.node.text }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onMouseEnter={onKeep}
+            onMouseLeave={onDismiss}
+        >
+            <div className="canvas-composer-popover-content">
+                <ResourcePreviewContent reference={reference} />
+            </div>
+        </div>,
+        document.body,
+    );
+}
+
 function MentionMenu({
     anchor,
     references,
@@ -443,30 +510,41 @@ function MentionMenu({
             onClick={(event) => event.stopPropagation()}
         >
             {references.map((reference, index) => (
-                <button
+                <Popover
                     key={reference.id}
-                    type="button"
-                    className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition"
-                    style={{ background: index === activeIndex ? theme.toolbar.activeBg : "transparent", color: index === activeIndex ? theme.toolbar.activeText : theme.node.text }}
-                    onPointerDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        selectReference(reference);
-                    }}
-                    onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        selectReference(reference);
-                    }}
+                    trigger="hover"
+                    mouseEnterDelay={0.4}
+                    mouseLeaveDelay={0.15}
+                    placement="right"
+                    arrow={false}
+                    destroyTooltipOnHide
+                    content={<ResourcePreviewContent reference={reference} />}
+                    classNames={{ root: "canvas-resource-hover-popover", container: "canvas-composer-popover-surface", content: "canvas-composer-popover-content" }}
                 >
-                    <ReferencePreview reference={reference} />
-                    <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium" title={reference.label}>
-                            {reference.label}
+                    <button
+                        type="button"
+                        className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition"
+                        style={{ background: index === activeIndex ? theme.toolbar.activeBg : "transparent", color: index === activeIndex ? theme.toolbar.activeText : theme.node.text }}
+                        onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            selectReference(reference);
+                        }}
+                        onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            selectReference(reference);
+                        }}
+                    >
+                        <ReferencePreview reference={reference} />
+                        <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium" title={reference.label}>
+                                {reference.label}
+                            </span>
+                            {reference.kind !== "skill" ? <span className="block truncate opacity-65">{reference.text || reference.title}</span> : null}
                         </span>
-                        {reference.kind !== "skill" ? <span className="block truncate opacity-65">{reference.text || reference.title}</span> : null}
-                    </span>
-                </button>
+                    </button>
+                </Popover>
             ))}
         </div>,
         document.body,
@@ -475,7 +553,7 @@ function MentionMenu({
 
 function ReferencePreview({ reference }: { reference: CanvasResourceReference }) {
     if (reference.kind === "image" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-9 rounded-md object-cover" />;
-    if (reference.kind === "video" && reference.previewUrl) return <video src={reference.previewUrl} className="size-9 rounded-md bg-black object-cover" muted preload="metadata" />;
+    if (reference.kind === "video" && reference.previewUrl) return <span className="grid size-9 shrink-0 overflow-hidden rounded-md bg-black"><video src={reference.previewUrl} className="size-full object-cover" muted preload="metadata" /></span>;
     if (reference.kind === "character" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-9 rounded-md bg-black/5 object-contain" />;
     if (reference.kind === "skill") {
         return (
