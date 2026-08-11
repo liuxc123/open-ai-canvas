@@ -64,14 +64,17 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     }, [mention, references]);
     const activeReferences = useMemo(() => (highlightLabels ? references.filter((item) => item.active) : []), [highlightLabels, references]);
     const useRichEditor = Boolean(activeReferences.length);
-    const reportContentSize = useCallback((element: HTMLElement | null) => {
-        if (!element || !onContentSizeChange) return;
-        const previousHeight = element.style.height;
-        element.style.height = "0px";
-        const height = element.scrollHeight;
-        element.style.height = previousHeight;
-        onContentSizeChange(height);
-    }, [onContentSizeChange]);
+    const reportContentSize = useCallback(
+        (element: HTMLElement | null) => {
+            if (!element || !onContentSizeChange) return;
+            const previousHeight = element.style.height;
+            element.style.height = "0px";
+            const height = element.scrollHeight;
+            element.style.height = previousHeight;
+            onContentSizeChange(height);
+        },
+        [onContentSizeChange],
+    );
 
     useLayoutEffect(() => {
         if (!useRichEditor) return;
@@ -83,7 +86,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
             pendingSelectionRef.current = null;
             return;
         }
-        const selection = pendingSelectionRef.current ?? (isFocused ? getEditableSelection(editor)?.start ?? null : null);
+        const selection = pendingSelectionRef.current ?? (isFocused ? (getEditableSelection(editor)?.start ?? null) : null);
         renderEditableContent(editor, value, activeReferences);
         lastRenderedValueRef.current = value;
         if (isFocused && selection !== null) setEditableSelection(editor, selection);
@@ -185,7 +188,8 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         caretColor: style?.color || theme.node.text,
     } as CSSProperties;
     const menuAnchor = useRichEditor ? editorRef.current : textareaRef.current;
-    const menu = mention && candidates.length && menuAnchor ? <MentionMenu anchor={menuAnchor} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} preferredWidth={mentionMenuWidth} onSelect={insertReference} /> : null;
+    const menu =
+        mention && candidates.length && menuAnchor ? <MentionMenu anchor={menuAnchor} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} preferredWidth={mentionMenuWidth} onSelect={insertReference} /> : null;
 
     if (useRichEditor) {
         return (
@@ -277,8 +281,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                         window.setTimeout(closeMention, 120);
                         props.onBlur?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>);
                     }}
-                >
-                </div>
+                ></div>
                 {menu}
             </div>
         );
@@ -378,7 +381,10 @@ function createInlineMentionChip(reference: CanvasResourceReference, token: stri
 function createInlinePreview(reference: CanvasResourceReference) {
     if ((reference.kind === "image" || reference.kind === "video" || reference.kind === "character") && reference.previewUrl) {
         const media = document.createElement(reference.kind === "video" ? "video" : "img");
-        media.className = `size-[1.18em] shrink-0 rounded-[0.24em] ${reference.kind === "video" ? "bg-black object-cover" : reference.kind === "character" ? "bg-black/5 object-contain" : "object-cover"}`;
+        media.className = `shrink-0 rounded-[0.24em] ${reference.kind === "video" ? "bg-black object-cover" : reference.kind === "character" ? "bg-black/5 object-contain" : "object-cover"}`;
+        media.style.width = "1.18em";
+        media.style.height = "1.18em";
+        media.style.minWidth = "0";
         media.setAttribute("src", reference.previewUrl);
         media.setAttribute("alt", "");
         if (media instanceof HTMLVideoElement) {
@@ -393,7 +399,21 @@ function createInlinePreview(reference: CanvasResourceReference) {
     return fallback;
 }
 
-function MentionMenu({ anchor, references, activeIndex, theme, preferredWidth, onSelect }: { anchor: HTMLElement; references: CanvasResourceReference[]; activeIndex: number; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; preferredWidth: number; onSelect: (reference: CanvasResourceReference) => void }) {
+function MentionMenu({
+    anchor,
+    references,
+    activeIndex,
+    theme,
+    preferredWidth,
+    onSelect,
+}: {
+    anchor: HTMLElement;
+    references: CanvasResourceReference[];
+    activeIndex: number;
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    preferredWidth: number;
+    onSelect: (reference: CanvasResourceReference) => void;
+}) {
     const selectedRef = useRef(false);
     const rect = anchor.getBoundingClientRect();
     const boundary = anchor.closest(".ant-modal-content")?.getBoundingClientRect() || { left: 8, top: 8, right: window.innerWidth - 8, bottom: window.innerHeight - 8 };
@@ -441,7 +461,9 @@ function MentionMenu({ anchor, references, activeIndex, theme, preferredWidth, o
                 >
                     <ReferencePreview reference={reference} />
                     <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium" title={reference.label}>{reference.label}</span>
+                        <span className="block truncate font-medium" title={reference.label}>
+                            {reference.label}
+                        </span>
                         {reference.kind !== "skill" ? <span className="block truncate opacity-65">{reference.text || reference.title}</span> : null}
                     </span>
                 </button>
