@@ -25,7 +25,8 @@ type SeedanceAsset struct {
 	// ===== 上游 Seedance/Ark 返回 =====
 	UpstreamAssetID    string `json:"upstreamAssetId" gorm:"index;size:120"`       // 响应中的 upstream_asset_id（核心：用于 asset:// 引用）
 	MaterialBaseURL    string `json:"materialBaseUrl,omitempty" gorm:"size:500"`    // 注册时使用的资产 API 地址，后续 get_asset 查询用
-	MaterialAPIVersion string `json:"materialApiVersion,omitempty" gorm:"size:24"`  // 注册时使用的资产 API 协议版本（如 "v1"）
+	MaterialAPIVersion string `json:"materialApiVersion,omitempty" gorm:"size:24"`  // 注册时使用的资产 API 版本号（如 "v1"），纳入指纹计算
+	MaterialAPIFormat  string `json:"materialApiFormat,omitempty" gorm:"size:32"`   // 注册时使用的资产 API 协议格式（如 "seedance-v1"），决定请求/响应字段映射
 
 	// ===== 注册请求上下文 =====
 	GroupType     string `json:"groupType" gorm:"size:24"`      // 固定 "AIGC"

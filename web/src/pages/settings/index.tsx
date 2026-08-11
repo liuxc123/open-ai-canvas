@@ -428,11 +428,21 @@ export default function SettingsPage() {
                                                                 onBlur={(event) => updateChannel(channel.id, { materialBaseUrl: event.target.value.trim().replace(/\/+$/, "") })}
                                                             />
                                                         </Form.Item>
-                                                        <Form.Item label="资产 API 版本（可选）" htmlFor={`channel-${channel.id}-material-api-version`} className="mb-0 lg:col-span-4" extra="默认 v1；修改后强制重新注册。">
+                                                        <Form.Item label="资产 API 格式（可选）" htmlFor={`channel-${channel.id}-material-api-format`} className="mb-0 lg:col-span-4" extra="选择素材注册接口的请求格式。">
+                                                            <Select
+                                                                id={`channel-${channel.id}-material-api-format`}
+                                                                value={channel.materialApiFormat || undefined}
+                                                                placeholder="Seedance v1（默认）"
+                                                                allowClear
+                                                                options={[{ label: "Seedance v1", value: "seedance-v1" }]}
+                                                                onChange={(value) => updateChannel(channel.id, { materialApiFormat: value || "" })}
+                                                            />
+                                                        </Form.Item>
+                                                        <Form.Item label="资产 API 版本号（可选）" htmlFor={`channel-${channel.id}-material-api-version`} className="mb-0 lg:col-span-4" extra="仅用于指纹计算；修改后强制重新注册。通常无需修改。">
                                                             <Input
                                                                 id={`channel-${channel.id}-material-api-version`}
                                                                 value={channel.materialApiVersion || ""}
-                                                                placeholder="v1"
+                                                                placeholder="1"
                                                                 onChange={(event) => updateChannel(channel.id, { materialApiVersion: event.target.value })}
                                                                 onBlur={(event) => updateChannel(channel.id, { materialApiVersion: event.target.value.trim() })}
                                                             />

@@ -18,6 +18,7 @@ export type ModelChannel = {
     baseUrl: string;
     materialBaseUrl?: string;
     materialApiVersion?: string;
+    materialApiFormat?: string;
     apiKey: string;
     secretKey?: string;
     headers?: ChannelHeader[];
@@ -49,6 +50,7 @@ export type AiConfig = {
     baseUrl: string;
     materialBaseUrl?: string;
     materialApiVersion?: string;
+    materialApiFormat?: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
     channels: ModelChannel[];
@@ -351,6 +353,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         baseUrl: providedBaseUrl || (interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat)),
         materialBaseUrl: channel?.materialBaseUrl?.trim() || "",
         materialApiVersion: channel?.materialApiVersion?.trim() || "",
+        materialApiFormat: channel?.materialApiFormat?.trim() || "",
         apiKey: channel?.apiKey || "",
         secretKey: channel?.secretKey || "",
         headers: Array.isArray(channel?.headers) ? channel.headers.map((header) => ({ name: String(header.name || ""), value: String(header.value || "") })) : [],
@@ -446,6 +449,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: channel.baseUrl,
         materialBaseUrl: channel.materialBaseUrl,
         materialApiVersion: channel.materialApiVersion,
+        materialApiFormat: channel.materialApiFormat,
         apiKey: channel.apiKey,
         secretKey: channel.secretKey,
         headers: channel.headers,

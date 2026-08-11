@@ -65,6 +65,7 @@ type providerConfig struct {
 	CapabilityConfig      *ModelCapabilityConfig `json:"capabilityConfig"`
 	MaterialBaseURL       string                 `json:"materialBaseUrl,omitempty"`
 	MaterialAPIVersion    string                 `json:"materialApiVersion,omitempty"`
+	MaterialAPIFormat     string                 `json:"materialApiFormat,omitempty"`
 }
 
 const providerHTTPTimeout = 5 * time.Minute
@@ -612,6 +613,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	config.BaseURL = channel.BaseURL
 	config.MaterialBaseURL = channel.MaterialBaseURL
 	config.MaterialAPIVersion = channel.MaterialAPIVersion
+	config.MaterialAPIFormat = channel.MaterialAPIFormat
 	config.APIKey = channel.APIKey
 	config.SecretKey = channel.SecretKey
 	config.Headers, err = ParseOutboundHeadersJSON(channel.HeadersJSON)

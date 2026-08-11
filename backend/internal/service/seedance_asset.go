@@ -24,7 +24,7 @@ const (
 	seedanceCreateAssetTimeout   = 30 * time.Second
 )
 
-// ===== 请求/响应结构体 =====
+// ===== 请求/响应结构体（v1 协议） =====
 
 type seedanceCreateAssetRequest struct {
 	Name          string `json:"Name"`
@@ -77,6 +77,127 @@ type seedanceGetAssetResponse struct {
 		ProjectName string `json:"ProjectName"`
 	} `json:"Result"`
 }
+
+// ===== 协议适配器 =====
+
+// seedanceAssetProtocol 封装某个 API 格式的素材注册协议。
+// 不同上游或同一上游的不同版本，请求路径、字段名、响应结构可能不同，
+// 通过 Protocol 接口隔离差异，业务层只操作统一的入参和出参。
+type seedanceAssetProtocol interface {
+	// CreatePath 返回注册素材的 API 路径
+	CreatePath() string
+	// GetPath 返回查询素材的 API 路径
+	GetPath() string
+	// BuildCreateRequest 将统一参数构造为该格式的请求体
+	BuildCreateRequest(params seedanceAssetParams) (interface{}, error)
+	// ParseCreateResponse 从该格式的响应中提取注册结果
+	ParseCreateResponse(body []byte) (*seedanceAssetRegistration, error)
+	// BuildGetRequest 构造查询请求体
+	BuildGetRequest(upstreamAssetID string) (interface{}, error)
+	// ParseGetResponse 从查询响应中提取状态
+	ParseGetResponse(body []byte) (*seedanceAssetStatusResult, error)
+	// MapStatus 将上游原始状态映射为标准状态
+	MapStatus(raw string) string
+	// MapAssetType 将本系统 Kind 映射为上游 AssetType
+	MapAssetType(kind string) (string, error)
+}
+
+// seedanceAssetParams 注册素材的统一入参（与协议格式无关）
+type seedanceAssetParams struct {
+	Name         string
+	AssetType    string // 已映射后的上游 AssetType
+	URL          string // 签名公网 URL
+	GroupType    string
+	Seq          int64 // 自增序列
+	ResourceHash string
+}
+
+// seedanceAssetRegistration 注册素材的统一出参（与协议格式无关）
+type seedanceAssetRegistration struct {
+	UpstreamAssetID string
+	Status          string // 标准化状态
+	RawStatus       string // 上游原始状态
+	MediaAssetsID   int
+}
+
+// seedanceAssetStatusResult 查询素材的统一出参（与协议格式无关）
+type seedanceAssetStatusResult struct {
+	UpstreamAssetID string
+	Status          string // 标准化状态
+	RawStatus       string // 上游原始状态
+	Name            string
+	URL             string
+	CreateTime      string
+}
+
+// resolveSeedanceAssetProtocol 根据 MaterialAPIFormat 选择协议适配器。
+// 空值或 "seedance-v1" 走 v1 协议；未来新增格式只需加 case 和实现文件。
+func resolveSeedanceAssetProtocol(apiFormat string) seedanceAssetProtocol {
+	switch strings.TrimSpace(apiFormat) {
+	default:
+		return seedanceAssetV1{} // v1 / 空值 / 未知格式均 fallback v1
+	}
+}
+
+// ===== v1 协议实现 =====
+
+type seedanceAssetV1 struct{}
+
+func (seedanceAssetV1) CreatePath() string { return "/api/material/create_asset" }
+func (seedanceAssetV1) GetPath() string    { return "/api/material/get_asset" }
+
+func (seedanceAssetV1) BuildCreateRequest(params seedanceAssetParams) (interface{}, error) {
+	return seedanceCreateAssetRequest{
+		Name:          params.Name,
+		AssetType:     params.AssetType,
+		URL:           params.URL,
+		GroupType:     params.GroupType,
+		MediaAssetsID: int(params.Seq),
+	}, nil
+}
+
+func (seedanceAssetV1) ParseCreateResponse(body []byte) (*seedanceAssetRegistration, error) {
+	var resp seedanceCreateAssetResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	assetID := strings.TrimSpace(resp.UpstreamAssetID)
+	if assetID == "" {
+		assetID = strings.TrimSpace(resp.Result.ID)
+	}
+	if assetID == "" {
+		return nil, errors.New("上游未返回资产 ID")
+	}
+	return &seedanceAssetRegistration{
+		UpstreamAssetID: assetID,
+		Status:          defaultString(resp.MaterialStatus, "submitted"),
+		RawStatus:       resp.MaterialStatus,
+		MediaAssetsID:   resp.MediaAssetsID,
+	}, nil
+}
+
+func (seedanceAssetV1) BuildGetRequest(upstreamAssetID string) (interface{}, error) {
+	return seedanceGetAssetRequest{ID: upstreamAssetID}, nil
+}
+
+func (seedanceAssetV1) ParseGetResponse(body []byte) (*seedanceAssetStatusResult, error) {
+	var resp seedanceGetAssetResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	return &seedanceAssetStatusResult{
+		UpstreamAssetID: resp.Result.ID,
+		Status:          mapSeedanceAssetStatus(resp.Result.Status),
+		RawStatus:       resp.Result.Status,
+		Name:            resp.Result.Name,
+		URL:             resp.Result.URL,
+		CreateTime:      resp.Result.CreateTime,
+	}, nil
+}
+
+func (seedanceAssetV1) MapStatus(raw string) string { return mapSeedanceAssetStatus(raw) }
+
+func (seedanceAssetV1) MapAssetType(kind string) (string, error) { return resourceAssetType(kind) }
 
 // ===== 辅助函数 =====
 
@@ -151,10 +272,26 @@ func (s *Service) resourceHash(resource *model.Resource) (string, error) {
 
 // ===== HTTP 调用 =====
 
-func (s *Service) callSeedanceCreateAsset(ctx context.Context, config providerConfig, req seedanceCreateAssetRequest) (*seedanceCreateAssetResponse, error) {
+// doRawJSON 发送 HTTP 请求并返回原始 JSON 字节，由 Protocol 解析。
+func doRawJSON(req *http.Request) ([]byte, error) {
+	data, mimeType, err := doBinary(req)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(mimeType, "json") && !json.Valid(data) {
+		return nil, fmt.Errorf("接口返回非 JSON 内容：%s", mimeType)
+	}
+	return data, nil
+}
+
+func (s *Service) callSeedanceCreateAsset(ctx context.Context, config providerConfig, protocol seedanceAssetProtocol, params seedanceAssetParams) (*seedanceAssetRegistration, error) {
 	baseURL := seedanceMaterialBaseURL(config)
-	url := baseURL + "/api/material/create_asset"
-	data, _ := json.Marshal(req)
+	url := baseURL + protocol.CreatePath()
+	reqBody, err := protocol.BuildCreateRequest(params)
+	if err != nil {
+		return nil, err
+	}
+	data, _ := json.Marshal(reqBody)
 	httpCtx, cancel := context.WithTimeout(ctx, seedanceCreateAssetTimeout)
 	defer cancel()
 	httpRequest, err := http.NewRequestWithContext(httpCtx, http.MethodPost, url, bytes.NewReader(data))
@@ -164,22 +301,33 @@ func (s *Service) callSeedanceCreateAsset(ctx context.Context, config providerCo
 	httpRequest.Header.Set("Authorization", "Bearer "+config.APIKey)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	ApplyOutboundHeaders(httpRequest, config.Headers)
-	var resp seedanceCreateAssetResponse
-	return &resp, doJSON(httpRequest, &resp)
+	responseBody, err := doRawJSON(httpRequest)
+	if err != nil {
+		return nil, err
+	}
+	return protocol.ParseCreateResponse(responseBody)
 }
 
-func (s *Service) callSeedanceGetAsset(ctx context.Context, materialBaseURL string, apiKey string, upstreamAssetID string) (*seedanceGetAssetResponse, error) {
-	url := strings.TrimRight(materialBaseURL, "/") + "/api/material/get_asset"
-	body := seedanceGetAssetRequest{ID: upstreamAssetID}
-	data, _ := json.Marshal(body)
+func (s *Service) callSeedanceGetAsset(ctx context.Context, config providerConfig, protocol seedanceAssetProtocol, upstreamAssetID string) (*seedanceAssetStatusResult, error) {
+	baseURL := seedanceMaterialBaseURL(config)
+	url := strings.TrimRight(baseURL, "/") + protocol.GetPath()
+	reqBody, err := protocol.BuildGetRequest(upstreamAssetID)
+	if err != nil {
+		return nil, err
+	}
+	data, _ := json.Marshal(reqBody)
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
-	httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
+	httpRequest.Header.Set("Authorization", "Bearer "+config.APIKey)
 	httpRequest.Header.Set("Content-Type", "application/json")
-	var resp seedanceGetAssetResponse
-	return &resp, doJSON(httpRequest, &resp)
+	ApplyOutboundHeaders(httpRequest, config.Headers)
+	responseBody, err := doRawJSON(httpRequest)
+	if err != nil {
+		return nil, err
+	}
+	return protocol.ParseGetResponse(responseBody)
 }
 
 // ===== 核心业务逻辑 =====
@@ -188,6 +336,7 @@ func (s *Service) callSeedanceGetAsset(ctx context.Context, materialBaseURL stri
 // 视频生成流程调用此函数。
 func (s *Service) EnsureSeedanceAsset(ctx context.Context, userID string, resourceID string, config providerConfig) (*model.SeedanceAsset, error) {
 	fingerprint := seedanceAccountFingerprint(config)
+	protocol := resolveSeedanceAssetProtocol(config.MaterialAPIFormat)
 
 	// 1. 查询已有记录
 	existing, err := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint)
@@ -212,7 +361,7 @@ func (s *Service) EnsureSeedanceAsset(ctx context.Context, userID string, resour
 			_ = s.repo.SaveSeedanceAsset(existing)
 		case "submitted", "processing":
 			// 调 get_asset 轮询到终态
-			return s.pollAndUpdateAsset(ctx, existing, config.APIKey)
+			return s.pollAndUpdateAsset(ctx, existing, config, protocol)
 		case "submitting":
 			// create_asset 可能仍在进行中或失败，标记 failed 重试
 			existing.Status = "failed"
@@ -225,11 +374,11 @@ func (s *Service) EnsureSeedanceAsset(ctx context.Context, userID string, resour
 	}
 
 	// 注册流程
-	return s.registerAndPollAsset(ctx, userID, resourceID, config, fingerprint)
+	return s.registerAndPollAsset(ctx, userID, resourceID, config, fingerprint, protocol)
 }
 
 // registerAndPollAsset 执行完整的注册+轮询流程。
-func (s *Service) registerAndPollAsset(ctx context.Context, userID string, resourceID string, config providerConfig, fingerprint string) (*model.SeedanceAsset, error) {
+func (s *Service) registerAndPollAsset(ctx context.Context, userID string, resourceID string, config providerConfig, fingerprint string, protocol seedanceAssetProtocol) (*model.SeedanceAsset, error) {
 	resource, err := s.repo.ResourceForUser(userID, resourceID)
 	if err != nil {
 		return nil, fmt.Errorf("读取资源失败：%w", err)
@@ -237,7 +386,7 @@ func (s *Service) registerAndPollAsset(ctx context.Context, userID string, resou
 	if resource.Status != model.ResourceStatusReady {
 		return nil, errors.New("资源尚未上传完成")
 	}
-	assetType, err := resourceAssetType(resource.Kind)
+	assetType, err := protocol.MapAssetType(resource.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +412,7 @@ func (s *Service) registerAndPollAsset(ctx context.Context, userID string, resou
 	if apiVersion == "" {
 		apiVersion = "v1"
 	}
+	apiFormat := strings.TrimSpace(config.MaterialAPIFormat)
 	// 先写入 SeedanceAsset 记录获取 Seq
 	record := &model.SeedanceAsset{
 		ID:                 newID(),
@@ -276,21 +426,25 @@ func (s *Service) registerAndPollAsset(ctx context.Context, userID string, resou
 		AccountFingerprint: fingerprint,
 		MaterialBaseURL:    seedanceMaterialBaseURL(config),
 		MaterialAPIVersion: apiVersion,
+		MaterialAPIFormat:  apiFormat,
 		GroupType:          "AIGC",
 		Status:             "submitting",
 	}
 	if err := s.repo.CreateSeedanceAsset(record); err != nil {
+		// 并发场景：另一个 goroutine 可能已创建同一 (userID, resourceID, fingerprint) 的记录
+		if existing, findErr := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint); findErr == nil && existing != nil {
+			return existing, nil
+		}
 		return nil, fmt.Errorf("创建资产记录失败：%w", err)
 	}
-	// 调 create_asset
-	req := seedanceCreateAssetRequest{
-		Name:          name,
-		AssetType:     assetType,
-		URL:           signedURL,
-		GroupType:     "AIGC",
-		MediaAssetsID: int(record.Seq),
-	}
-	resp, err := s.callSeedanceCreateAsset(ctx, config, req)
+	// 通过 protocol 构造请求并调用 create_asset
+	reg, err := s.callSeedanceCreateAsset(ctx, config, protocol, seedanceAssetParams{
+		Name:      name,
+		AssetType: assetType,
+		URL:       signedURL,
+		GroupType: "AIGC",
+		Seq:       record.Seq,
+	})
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorResponse = err.Error()
@@ -298,31 +452,24 @@ func (s *Service) registerAndPollAsset(ctx context.Context, userID string, resou
 		_ = s.repo.SaveSeedanceAsset(record)
 		return record, fmt.Errorf("调用 create_asset 失败：%w", err)
 	}
-	if strings.TrimSpace(resp.UpstreamAssetID) == "" {
-		record.Status = "failed"
-		record.ErrorResponse = "上游未返回资产 ID"
-		record.UpdatedAt = time.Now()
-		_ = s.repo.SaveSeedanceAsset(record)
-		return record, errors.New("上游未返回资产 ID")
-	}
 	// 更新记录
-	record.UpstreamAssetID = resp.UpstreamAssetID
-	record.Status = defaultString(resp.MaterialStatus, "submitted")
-	record.MediaAssetsID = resp.MediaAssetsID
+	record.UpstreamAssetID = reg.UpstreamAssetID
+	record.Status = reg.Status
+	record.MediaAssetsID = reg.MediaAssetsID
 	record.UpdatedAt = time.Now()
 	if err := s.repo.SaveSeedanceAsset(record); err != nil {
 		return nil, fmt.Errorf("更新资产记录失败：%w", err)
 	}
 	// 轮询 get_asset 直到终态
-	return s.pollAndUpdateAsset(ctx, record, config.APIKey)
+	return s.pollAndUpdateAsset(ctx, record, config, protocol)
 }
 
 // pollAndUpdateAsset 轮询 get_asset 直到终态并更新数据库。
-func (s *Service) pollAndUpdateAsset(ctx context.Context, asset *model.SeedanceAsset, apiKey string) (*model.SeedanceAsset, error) {
+func (s *Service) pollAndUpdateAsset(ctx context.Context, asset *model.SeedanceAsset, config providerConfig, protocol seedanceAssetProtocol) (*model.SeedanceAsset, error) {
 	if asset.UpstreamAssetID == "" {
 		return asset, errors.New("资产记录缺少 upstream_asset_id，无法轮询")
 	}
-	status, err := s.pollSeedanceAssetStatus(ctx, asset.MaterialBaseURL, apiKey, asset.UpstreamAssetID)
+	status, err := s.pollSeedanceAssetStatus(ctx, config, protocol, asset.UpstreamAssetID)
 	if err != nil {
 		asset.Status = "failed"
 		asset.ErrorResponse = err.Error()
@@ -344,15 +491,15 @@ func (s *Service) pollAndUpdateAsset(ctx context.Context, asset *model.SeedanceA
 }
 
 // pollSeedanceAssetStatus 轮询 get_asset 直到 approved / failed / 超时。
-func (s *Service) pollSeedanceAssetStatus(ctx context.Context, materialBaseURL string, apiKey string, upstreamAssetID string) (string, error) {
+func (s *Service) pollSeedanceAssetStatus(ctx context.Context, config providerConfig, protocol seedanceAssetProtocol, upstreamAssetID string) (string, error) {
 	deadline := time.Now().Add(seedanceAssetPollTimeout)
 	interval := seedanceAssetPollMinInterval
 	for time.Now().Before(deadline) {
-		resp, err := s.callSeedanceGetAsset(ctx, materialBaseURL, apiKey, upstreamAssetID)
+		result, err := s.callSeedanceGetAsset(ctx, config, protocol, upstreamAssetID)
 		if err != nil {
 			return "", err
 		}
-		status := mapSeedanceAssetStatus(resp.Result.Status)
+		status := result.Status
 		switch status {
 		case "approved":
 			return status, nil
@@ -371,15 +518,15 @@ func (s *Service) pollSeedanceAssetStatus(ctx context.Context, materialBaseURL s
 }
 
 // refreshSeedanceAssetStatus 调 get_asset 刷新单个资产状态并写回数据库。
-func (s *Service) refreshSeedanceAssetStatus(ctx context.Context, asset *model.SeedanceAsset, apiKey string) (string, error) {
+func (s *Service) refreshSeedanceAssetStatus(ctx context.Context, asset *model.SeedanceAsset, config providerConfig, protocol seedanceAssetProtocol) (string, error) {
 	if asset.UpstreamAssetID == "" {
 		return asset.Status, nil
 	}
-	resp, err := s.callSeedanceGetAsset(ctx, asset.MaterialBaseURL, apiKey, asset.UpstreamAssetID)
+	result, err := s.callSeedanceGetAsset(ctx, config, protocol, asset.UpstreamAssetID)
 	if err != nil {
 		return asset.Status, err
 	}
-	status := mapSeedanceAssetStatus(resp.Result.Status)
+	status := result.Status
 	if status != asset.Status {
 		asset.Status = status
 		asset.UpdatedAt = time.Now()
@@ -398,6 +545,7 @@ func (s *Service) refreshSeedanceAssetStatus(ctx context.Context, asset *model.S
 // registerSeedanceAssetOnly 只注册不等待：create_asset + 写入 submitted 后返回。
 func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, resourceID string, config providerConfig) (*model.SeedanceAsset, error) {
 	fingerprint := seedanceAccountFingerprint(config)
+	protocol := resolveSeedanceAssetProtocol(config.MaterialAPIFormat)
 
 	// 检查是否已有终态记录
 	existing, err := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint)
@@ -428,7 +576,7 @@ func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, 
 	if resource.Status != model.ResourceStatusReady {
 		return nil, errors.New("资源尚未上传完成")
 	}
-	assetType, err := resourceAssetType(resource.Kind)
+	assetType, err := protocol.MapAssetType(resource.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -451,6 +599,7 @@ func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, 
 	if apiVersion == "" {
 		apiVersion = "v1"
 	}
+	apiFormat := strings.TrimSpace(config.MaterialAPIFormat)
 	record := &model.SeedanceAsset{
 		ID:                 newID(),
 		UserID:             userID,
@@ -463,20 +612,25 @@ func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, 
 		AccountFingerprint: fingerprint,
 		MaterialBaseURL:    seedanceMaterialBaseURL(config),
 		MaterialAPIVersion: apiVersion,
+		MaterialAPIFormat:  apiFormat,
 		GroupType:          "AIGC",
 		Status:             "submitting",
 	}
 	if err := s.repo.CreateSeedanceAsset(record); err != nil {
+		// 并发场景：另一个 goroutine 可能已创建同一 (userID, resourceID, fingerprint) 的记录
+		if existing, findErr := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint); findErr == nil && existing != nil {
+			return existing, nil
+		}
 		return nil, fmt.Errorf("创建资产记录失败：%w", err)
 	}
-	req := seedanceCreateAssetRequest{
-		Name:          name,
-		AssetType:     assetType,
-		URL:           signedURL,
-		GroupType:     "AIGC",
-		MediaAssetsID: int(record.Seq),
-	}
-	resp, err := s.callSeedanceCreateAsset(ctx, config, req)
+	// 通过 protocol 构造请求并调用 create_asset
+	reg, err := s.callSeedanceCreateAsset(ctx, config, protocol, seedanceAssetParams{
+		Name:      name,
+		AssetType: assetType,
+		URL:       signedURL,
+		GroupType: "AIGC",
+		Seq:       record.Seq,
+	})
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorResponse = err.Error()
@@ -484,16 +638,9 @@ func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, 
 		_ = s.repo.SaveSeedanceAsset(record)
 		return record, fmt.Errorf("调用 create_asset 失败：%w", err)
 	}
-	if strings.TrimSpace(resp.UpstreamAssetID) == "" {
-		record.Status = "failed"
-		record.ErrorResponse = "上游未返回资产 ID"
-		record.UpdatedAt = time.Now()
-		_ = s.repo.SaveSeedanceAsset(record)
-		return record, errors.New("上游未返回资产 ID")
-	}
-	record.UpstreamAssetID = resp.UpstreamAssetID
-	record.Status = defaultString(resp.MaterialStatus, "submitted")
-	record.MediaAssetsID = resp.MediaAssetsID
+	record.UpstreamAssetID = reg.UpstreamAssetID
+	record.Status = reg.Status
+	record.MediaAssetsID = reg.MediaAssetsID
 	record.UpdatedAt = time.Now()
 	if err := s.repo.SaveSeedanceAsset(record); err != nil {
 		return nil, fmt.Errorf("更新资产记录失败：%w", err)
@@ -515,7 +662,7 @@ type SeedanceRegisterResult struct {
 	Error      string              `json:"error,omitempty"`
 }
 
-// RegisterSeedanceAssetsBatch 批量注册资产，不同渠道并发、同渠道串行。
+// RegisterSeedanceAssetsBatch 批量注册资产，不同渠道并发、同渠道内也并发。
 func (s *Service) RegisterSeedanceAssetsBatch(ctx context.Context, userID string, items []SeedanceRegisterItem) ([]SeedanceRegisterResult, error) {
 	results := make([]SeedanceRegisterResult, len(items))
 	groups := make(map[string][]int)
@@ -537,21 +684,30 @@ func (s *Service) RegisterSeedanceAssetsBatch(ctx context.Context, userID string
 			}
 			config, err := s.resolveProviderConfig(providerConfig{ChannelID: channelID, Model: model})
 			if err != nil {
+				mu.Lock()
 				for _, idx := range indices {
 					results[idx] = SeedanceRegisterResult{ResourceID: items[idx].ResourceID, Error: err.Error()}
 				}
+				mu.Unlock()
 				return
 			}
+			// 同渠道内并发注册
+			var innerWg sync.WaitGroup
 			for _, idx := range indices {
-				asset, err := s.registerSeedanceAssetOnly(ctx, userID, items[idx].ResourceID, config)
-				mu.Lock()
-				if err != nil {
-					results[idx] = SeedanceRegisterResult{ResourceID: items[idx].ResourceID, Error: err.Error()}
-				} else {
-					results[idx] = SeedanceRegisterResult{ResourceID: items[idx].ResourceID, Asset: asset}
-				}
-				mu.Unlock()
+				innerWg.Add(1)
+				go func(i int) {
+					defer innerWg.Done()
+					asset, err := s.registerSeedanceAssetOnly(ctx, userID, items[i].ResourceID, config)
+					mu.Lock()
+					if err != nil {
+						results[i] = SeedanceRegisterResult{ResourceID: items[i].ResourceID, Error: err.Error()}
+					} else {
+						results[i] = SeedanceRegisterResult{ResourceID: items[i].ResourceID, Asset: asset}
+					}
+					mu.Unlock()
+				}(idx)
 			}
+			innerWg.Wait()
 		}(channelID, indices)
 	}
 	wg.Wait()
@@ -559,11 +715,12 @@ func (s *Service) RegisterSeedanceAssetsBatch(ctx context.Context, userID string
 }
 
 // ListSeedanceAssets 批量查询资产，非终态资产并发调 get_asset 刷新。
-func (s *Service) ListSeedanceAssets(ctx context.Context, userID string, channelID string, resourceIDs []string, apiKey string) ([]model.SeedanceAsset, error) {
+func (s *Service) ListSeedanceAssets(ctx context.Context, userID string, channelID string, resourceIDs []string, config providerConfig) ([]model.SeedanceAsset, error) {
 	assets, err := s.repo.SeedanceAssetsByResourceIDs(userID, resourceIDs)
 	if err != nil {
 		return nil, err
 	}
+	protocol := resolveSeedanceAssetProtocol(config.MaterialAPIFormat)
 	var wg sync.WaitGroup
 	for i := range assets {
 		if assets[i].Status != "submitted" && assets[i].Status != "processing" {
@@ -572,7 +729,7 @@ func (s *Service) ListSeedanceAssets(ctx context.Context, userID string, channel
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			status, _ := s.refreshSeedanceAssetStatus(ctx, &assets[idx], apiKey)
+			status, _ := s.refreshSeedanceAssetStatus(ctx, &assets[idx], config, protocol)
 			if status != "" {
 				assets[idx].Status = status
 			}
@@ -585,10 +742,19 @@ func (s *Service) ListSeedanceAssets(ctx context.Context, userID string, channel
 // ===== 视频生成流程集成 =====
 
 // ensureSeedanceAssetsForVideoGeneration 在视频生成前确保所有参考素材已注册。
-// 分别遍历三组切片，确保修改回写到 input。
+// 先并发注册所有素材，再并发轮询非终态素材，避免逐个串行等待。
 func (s *Service) ensureSeedanceAssetsForVideoGeneration(ctx context.Context, userID string, input *canvasGenerationInput) error {
+	type assetJob struct {
+		groupIndex int
+		itemIndex  int
+		resourceID string
+		media      *providerMedia
+	}
+
+	// 1. 收集所有需要注册的素材
+	var jobs []assetJob
 	groups := [][]providerMedia{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios}
-	for _, group := range groups {
+	for gi, group := range groups {
 		for i := range group {
 			media := &group[i]
 			if strings.HasPrefix(media.URL, "asset://") || strings.HasPrefix(media.DataURL, "data:") {
@@ -598,16 +764,41 @@ func (s *Service) ensureSeedanceAssetsForVideoGeneration(ctx context.Context, us
 			if resourceID == "" || resourceID == media.StorageKey {
 				continue
 			}
-			asset, err := s.EnsureSeedanceAsset(ctx, userID, resourceID, input.Config)
-			if err != nil {
-				return fmt.Errorf("Seedance 资产注册失败（%s）：%w", media.Name, err)
-			}
-			if asset.Status != "approved" {
-				return fmt.Errorf("Seedance 资产 %s 未审核通过（状态：%s）", media.Name, asset.Status)
-			}
-			media.URL = "asset://" + asset.UpstreamAssetID
-			media.DataURL = ""
+			jobs = append(jobs, assetJob{groupIndex: gi, itemIndex: i, resourceID: resourceID, media: media})
 		}
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	// 2. 并发注册所有素材（EnsureSeedanceAsset 内部有幂等检查，并发安全）
+	type assetResult struct {
+		job  assetJob
+		asset *model.SeedanceAsset
+		err   error
+	}
+	results := make([]assetResult, len(jobs))
+	var wg sync.WaitGroup
+	for i, job := range jobs {
+		wg.Add(1)
+		go func(idx int, j assetJob) {
+			defer wg.Done()
+			asset, err := s.EnsureSeedanceAsset(ctx, userID, j.resourceID, input.Config)
+			results[idx] = assetResult{job: j, asset: asset, err: err}
+		}(i, job)
+	}
+	wg.Wait()
+
+	// 3. 检查结果，回写 asset:// 引用
+	for _, r := range results {
+		if r.err != nil {
+			return fmt.Errorf("Seedance 资产注册失败（%s）：%w", r.job.media.Name, r.err)
+		}
+		if r.asset.Status != "approved" {
+			return fmt.Errorf("Seedance 资产 %s 未审核通过（状态：%s）", r.job.media.Name, r.asset.Status)
+		}
+		r.job.media.URL = "asset://" + r.asset.UpstreamAssetID
+		r.job.media.DataURL = ""
 	}
 	return nil
 }
@@ -638,64 +829,101 @@ func (s *Service) RegisterSeedanceAsset(ctx context.Context, userID string, req 
 }
 
 // GetSeedanceAsset 查询单个资产状态，非终态时调 get_asset 刷新。
-func (s *Service) GetSeedanceAsset(ctx context.Context, userID string, assetID string, channelID string, model string) (*model.SeedanceAsset, error) {
+// 如果资产的 fingerprint 与当前渠道不匹配，视为未注册，返回 nil。
+func (s *Service) GetSeedanceAsset(ctx context.Context, userID string, assetID string, channelID string, modelName string) (*model.SeedanceAsset, error) {
 	asset, err := s.repo.SeedanceAssetByID(userID, assetID)
 	if err != nil {
 		return nil, err
 	}
-	if asset.Status == "submitted" || asset.Status == "processing" {
-		config, err := s.resolveProviderConfig(providerConfig{ChannelID: firstNonEmpty(channelID, asset.ChannelID), Model: model})
+	// 检查 fingerprint 是否匹配当前渠道
+	if strings.TrimSpace(channelID) != "" {
+		config, err := s.resolveProviderConfig(providerConfig{ChannelID: firstNonEmpty(channelID, asset.ChannelID), Model: modelName})
 		if err == nil {
-			_, _ = s.refreshSeedanceAssetStatus(ctx, asset, config.APIKey)
+			currentFingerprint := seedanceAccountFingerprint(config)
+			if asset.AccountFingerprint != currentFingerprint {
+				// 指纹不匹配，视为未注册
+				return nil, nil
+			}
+			// fingerprint 匹配且非终态：刷新
+			if asset.Status == "submitted" || asset.Status == "processing" {
+				protocol := resolveSeedanceAssetProtocol(config.MaterialAPIFormat)
+				_, _ = s.refreshSeedanceAssetStatus(ctx, asset, config, protocol)
+			}
 		}
 	}
 	return asset, nil
 }
 
 // ListUserSeedanceAssets 查询用户资产列表，支持 channelId 和 resourceIds 过滤。
-func (s *Service) ListUserSeedanceAssets(ctx context.Context, userID string, channelID string, resourceIDs []string, model string) ([]model.SeedanceAsset, error) {
+// 使用当前渠道的 fingerprint 过滤：指纹不匹配的旧记录标记 expired 并从返回结果中排除，
+// 前端收不到这些记录会将其视为"未注册"，与从未注册过的素材走相同流程。
+func (s *Service) ListUserSeedanceAssets(ctx context.Context, userID string, channelID string, resourceIDs []string, modelName string) ([]model.SeedanceAsset, error) {
 	assets, err := s.repo.SeedanceAssetsByResourceIDs(userID, resourceIDs)
 	if err != nil {
 		return nil, err
 	}
-	// 对非终态资产并发调 get_asset 刷新
+	if len(assets) == 0 {
+		return assets, nil
+	}
+
+	// 解析当前渠道配置，计算 fingerprint
+	var currentFingerprint string
+	var config providerConfig
+	var protocol seedanceAssetProtocol
+	if strings.TrimSpace(channelID) != "" {
+		resolvedConfig, err := s.resolveProviderConfig(providerConfig{ChannelID: channelID, Model: modelName})
+		if err == nil {
+			config = resolvedConfig
+			currentFingerprint = seedanceAccountFingerprint(config)
+			protocol = resolveSeedanceAssetProtocol(config.MaterialAPIFormat)
+		}
+	}
+
+	// 对每条记录检查 fingerprint 是否匹配
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	needConfig := false
 	for i := range assets {
-		if assets[i].Status == "submitted" || assets[i].Status == "processing" {
-			needConfig = true
-			break
-		}
-	}
-	var apiKey string
-	if needConfig {
-		config, err := s.resolveProviderConfig(providerConfig{ChannelID: channelID, Model: model})
-		if err == nil {
-			apiKey = config.APIKey
-		}
-	}
-	for i := range assets {
-		if assets[i].Status != "submitted" && assets[i].Status != "processing" {
+		// fingerprint 不匹配：旧记录标记 expired 并排除，前端视为"未注册"
+		if currentFingerprint != "" && assets[i].AccountFingerprint != currentFingerprint {
+			if assets[i].Status != "expired" && assets[i].Status != "failed" {
+				assets[i].Status = "expired"
+				assets[i].UpdatedAt = time.Now()
+				_ = s.repo.SaveSeedanceAsset(&assets[i])
+			}
 			continue
 		}
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			status, _ := s.refreshSeedanceAssetStatus(ctx, &assets[idx], apiKey)
-			if status != "" {
-				mu.Lock()
-				assets[idx].Status = status
-				mu.Unlock()
-			}
-		}(i)
+		// fingerprint 匹配且非终态：并发刷新
+		if assets[i].Status == "submitted" || assets[i].Status == "processing" {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				status, _ := s.refreshSeedanceAssetStatus(ctx, &assets[idx], config, protocol)
+				if status != "" {
+					mu.Lock()
+					assets[idx].Status = status
+					mu.Unlock()
+				}
+			}(i)
+		}
 	}
 	wg.Wait()
-	return assets, nil
+
+	// 过滤掉指纹不匹配的记录，前端收不到即视为"未注册"
+	filtered := make([]model.SeedanceAsset, 0, len(assets))
+	for i := range assets {
+		if currentFingerprint != "" && assets[i].AccountFingerprint != currentFingerprint {
+			continue
+		}
+		filtered = append(filtered, assets[i])
+	}
+	if len(filtered) == 0 {
+		return nil, nil
+	}
+	return filtered, nil
 }
 
 // VerifySeedanceAsset 触发重新验证资产状态。
-func (s *Service) VerifySeedanceAsset(ctx context.Context, userID string, assetID string, channelID string, model string) (*model.SeedanceAsset, error) {
+func (s *Service) VerifySeedanceAsset(ctx context.Context, userID string, assetID string, channelID string, modelName string) (*model.SeedanceAsset, error) {
 	asset, err := s.repo.SeedanceAssetByID(userID, assetID)
 	if err != nil {
 		return nil, err
@@ -703,10 +931,11 @@ func (s *Service) VerifySeedanceAsset(ctx context.Context, userID string, assetI
 	if asset.UpstreamAssetID == "" {
 		return asset, errors.New("资产尚未注册成功，无法验证")
 	}
-	config, err := s.resolveProviderConfig(providerConfig{ChannelID: firstNonEmpty(channelID, asset.ChannelID), Model: model})
+	config, err := s.resolveProviderConfig(providerConfig{ChannelID: firstNonEmpty(channelID, asset.ChannelID), Model: modelName})
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.refreshSeedanceAssetStatus(ctx, asset, config.APIKey)
+	protocol := resolveSeedanceAssetProtocol(config.MaterialAPIFormat)
+	_, err = s.refreshSeedanceAssetStatus(ctx, asset, config, protocol)
 	return asset, err
 }

@@ -1661,18 +1661,19 @@ func (r *Repository) SeedanceAssetByIdentity(userID string, resourceID string, f
 }
 
 // SeedanceAssetsByResourceIDs 按 userID + resourceIDs 批量查询资产记录。
-// 每个 resourceId 只返回最新的一条（按 updated_at desc），避免旧记录覆盖新记录。
+// 每个 resourceId 只返回最新的一条（按 seq 降序），避免旧记录覆盖新记录。
+// 注意：id 是随机 UUID，不能用 MAX(id) 排序；seq 是自增整数，MAX(seq) 能正确取最新记录。
 func (r *Repository) SeedanceAssetsByResourceIDs(userID string, resourceIDs []string) ([]model.SeedanceAsset, error) {
 	if len(resourceIDs) == 0 {
 		return nil, nil
 	}
 	var assets []model.SeedanceAsset
-	// 子查询：每个 resource_id 取 updated_at 最大的一条
+	// 子查询：每个 resource_id 取 seq 最大（即最新）的一条
 	subQuery := r.db.Model(&model.SeedanceAsset{}).
-		Select("MAX(id)").
+		Select("MAX(seq)").
 		Where("user_id = ? AND resource_id IN ?", userID, resourceIDs).
 		Group("resource_id")
-	err := r.db.Where("id IN (?)", subQuery).Order("updated_at desc").Find(&assets).Error
+	err := r.db.Where("seq IN (?)", subQuery).Order("updated_at desc").Find(&assets).Error
 	return assets, err
 }
 

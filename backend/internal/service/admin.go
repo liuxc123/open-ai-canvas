@@ -87,6 +87,7 @@ type ChannelRequest struct {
 	BaseURL              string           `json:"baseUrl"`
 	MaterialBaseURL      string           `json:"materialBaseUrl,omitempty"`
 	MaterialAPIVersion   string           `json:"materialApiVersion,omitempty"`
+	MaterialAPIFormat    string           `json:"materialApiFormat,omitempty"`
 	APIKey               string           `json:"apiKey"`
 	SecretKey            string           `json:"secretKey"`
 	ConcurrencyLimit     *int             `json:"concurrencyLimit"`
@@ -105,6 +106,7 @@ type PublicModelChannel struct {
 	BaseURL             string                    `json:"baseUrl"`
 	MaterialBaseURL     string                    `json:"materialBaseUrl,omitempty"`
 	MaterialAPIVersion  string                    `json:"materialApiVersion,omitempty"`
+	MaterialAPIFormat   string                    `json:"materialApiFormat,omitempty"`
 	APIKey              string                    `json:"apiKey"`
 	APIFormat        string                    `json:"apiFormat"`
 	ConcurrencyLimit int                       `json:"concurrencyLimit"`
@@ -697,6 +699,7 @@ func channelFromRequest(req ChannelRequest, channel model.ModelChannel) (model.M
 	channel.BaseURL = strings.TrimRight(baseURL, "/")
 	channel.MaterialBaseURL = strings.TrimSpace(req.MaterialBaseURL)
 	channel.MaterialAPIVersion = strings.TrimSpace(req.MaterialAPIVersion)
+	channel.MaterialAPIFormat = strings.TrimSpace(req.MaterialAPIFormat)
 	if req.APIKey != "" {
 		channel.APIKey = req.APIKey
 	}
@@ -730,9 +733,10 @@ func mergeChannelRequest(req ChannelRequest, channel model.ModelChannel) Channel
 	if strings.TrimSpace(req.BaseURL) == "" {
 		req.BaseURL = channel.BaseURL
 	}
-	if strings.TrimSpace(req.MaterialBaseURL) == "" && strings.TrimSpace(req.MaterialAPIVersion) == "" {
+	if strings.TrimSpace(req.MaterialBaseURL) == "" && strings.TrimSpace(req.MaterialAPIVersion) == "" && strings.TrimSpace(req.MaterialAPIFormat) == "" {
 		req.MaterialBaseURL = channel.MaterialBaseURL
 		req.MaterialAPIVersion = channel.MaterialAPIVersion
+		req.MaterialAPIFormat = channel.MaterialAPIFormat
 	}
 	if req.Models == nil {
 		req.Models = channelModelNames(channel)
@@ -791,6 +795,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 		BaseURL:            baseURL,
 		MaterialBaseURL:    channel.MaterialBaseURL,
 		MaterialAPIVersion: channel.MaterialAPIVersion,
+		MaterialAPIFormat:  channel.MaterialAPIFormat,
 		APIKey:             apiKey,
 		APIFormat:        channel.APIFormat,
 		ConcurrencyLimit: channel.ConcurrencyLimit,
