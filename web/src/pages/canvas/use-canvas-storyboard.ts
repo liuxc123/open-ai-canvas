@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
 
@@ -9,6 +9,7 @@ import {
     generationTaskMetadata,
     resetGenerationTaskMetadata,
 } from "@/lib/canvas/canvas-project-generation";
+import { parseStoryboardExcel, pickExcelFile, type ExcelImportResult } from "@/lib/canvas/storyboard-excel-import";
 import {
     cinematicStoryboardColumns,
     createCanvasNode,
@@ -58,6 +59,8 @@ export function useCanvasStoryboard({
     const { message, modal } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
+    const [excelImportResult, setExcelImportResult] = useState<ExcelImportResult | null>(null);
+    const [excelImportNodeId, setExcelImportNodeId] = useState<string | null>(null);
 
     const confirmGenerationSubmission = useCallback((count: number, model: string, taskLabel: string) => new Promise<boolean>((resolve) => {
         if (!count) return resolve(false);
@@ -95,6 +98,40 @@ export function useCanvasStoryboard({
             .filter((connection) => connection.toNodeId !== nodeId || !connection.toHandleId || rowIds.has(connection.toHandleId)));
         updateScriptRows(nodeId, () => nextRows);
     }, [nodesRef, setConnections, updateScriptRows]);
+
+    const importScriptExcel = useCallback(async (nodeId: string) => {
+        console.log("[importScriptExcel] called, nodeId:", nodeId);
+        const file = await pickExcelFile();
+        console.log("[importScriptExcel] picked file:", file?.name || "null");
+        if (!file) return;
+        try {
+            const result = await parseStoryboardExcel(file);
+            setExcelImportNodeId(nodeId);
+            setExcelImportResult(result);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "Excel 解析失败");
+        }
+    }, [message]);
+
+    const confirmExcelImport = useCallback((rows: StoryboardRow[], mode: "replace" | "append") => {
+        if (!excelImportNodeId) return;
+        const nodeId = excelImportNodeId;
+        if (mode === "append") {
+            const existingRows = nodesRef.current.find((node) => node.id === nodeId)?.metadata?.storyboard?.rows || [];
+            const appended = [...existingRows, ...rows].map((row, index) => ({ ...row, shotNumber: index + 1 }));
+            replaceScriptRows(nodeId, appended);
+        } else {
+            replaceScriptRows(nodeId, rows);
+        }
+        message.success(`已导入 ${rows.length} 个镜头`);
+        setExcelImportResult(null);
+        setExcelImportNodeId(null);
+    }, [excelImportNodeId, message, nodesRef, replaceScriptRows]);
+
+    const cancelExcelImport = useCallback(() => {
+        setExcelImportResult(null);
+        setExcelImportNodeId(null);
+    }, []);
 
     const addScriptRow = useCallback((nodeId: string) => {
         updateScriptRows(nodeId, (rows) => [...rows, createStoryboardRow(rows.length + 1)]);
@@ -478,13 +515,17 @@ export function useCanvasStoryboard({
 
     return {
         addScriptRow,
+        cancelExcelImport,
+        confirmExcelImport,
         createAndGenerateScriptVideos,
         createScriptActionBoards,
         createScriptImageNodes,
         createScriptVideoNodes,
+        excelImportResult,
         generateScriptImages,
         generateScriptRows,
         generateScriptVideos,
+        importScriptExcel,
         removeScriptRow,
         replaceScriptRows,
         updateScriptRow,

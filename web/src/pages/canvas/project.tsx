@@ -50,6 +50,7 @@ import { getProject } from "@/services/api/projects";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasShareModal } from "@/components/canvas/canvas-share-modal";
 import { CanvasScriptEditor, CanvasScriptNodeContent, STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/components/canvas/canvas-script-node";
+import { StoryboardExcelImportModal } from "@/components/canvas/storyboard-excel-import-modal";
 import { CanvasDirectorNodePanel } from "@/components/canvas/director/canvas-director-node-panel";
 import { CanvasVersionCompareModal } from "@/components/canvas/canvas-version-compare-modal";
 import { CanvasLocalAgentPanel } from "@/components/canvas/canvas-local-agent-panel";
@@ -1194,7 +1195,7 @@ function InfiniteCanvasPage() {
         handleGenerateNode,
     });
 
-    const { addScriptRow, createAndGenerateScriptVideos, createScriptActionBoards, createScriptImageNodes, createScriptVideoNodes, generateScriptImages, generateScriptRows, generateScriptVideos, removeScriptRow, replaceScriptRows, updateScriptRow } =
+    const { addScriptRow, cancelExcelImport, confirmExcelImport, createAndGenerateScriptVideos, createScriptActionBoards, createScriptImageNodes, createScriptVideoNodes, excelImportResult, generateScriptImages, generateScriptRows, generateScriptVideos, importScriptExcel, removeScriptRow, replaceScriptRows, updateScriptRow } =
         useCanvasStoryboard({
             projectId,
             nodesRef,
@@ -1343,6 +1344,7 @@ function InfiniteCanvasPage() {
                         }}
                         onConnectStart={(event, rowId, handleType) => handleConnectStart(event, contentNode.id, handleType, rowId === "context" ? "storyboard:context" : `row:${rowId}`)}
                         onScrollTopChange={(scrollTop) => setScriptScrollTopById((current) => (current[contentNode.id] === scrollTop ? current : { ...current, [contentNode.id]: scrollTop }))}
+                        onImportExcel={() => void importScriptExcel(contentNode.id)}
                     />
                 );
             }
@@ -2073,6 +2075,14 @@ function InfiniteCanvasPage() {
                             else void createAndGenerateScriptVideos(activeScriptNode.id, rowIds);
                         }}
                         onVideoInputModeChange={(storyboardVideoInputMode) => activeScriptNode && handleConfigNodeChange(activeScriptNode.id, { storyboardVideoInputMode })}
+                        onImportExcel={() => activeScriptNode && void importScriptExcel(activeScriptNode.id)}
+                    />
+
+                    <StoryboardExcelImportModal
+                        open={Boolean(excelImportResult)}
+                        importResult={excelImportResult}
+                        onCancel={cancelExcelImport}
+                        onConfirm={confirmExcelImport}
                     />
 
                     {directorNodeId && activeDirectorScene ? (

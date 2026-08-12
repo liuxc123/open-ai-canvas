@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { Button, Checkbox, Dropdown, Input, InputNumber, Modal, Segmented, Select, Table, Tooltip } from "antd";
 import type { MenuProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { ChevronDown, ChevronUp, Clapperboard, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Merge, Minus, MoreHorizontal, Plus, RefreshCw, Send, Square, Trash2, Video, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Clapperboard, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Merge, Minus, MoreHorizontal, Plus, RefreshCw, Send, Square, Trash2, Upload, Video, X } from "lucide-react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import { ModelPicker } from "@/components/model-picker";
@@ -60,7 +60,7 @@ const columnOptions: Array<{ label: string; value: StoryboardColumn }> = [
     { label: "负面要求", value: "negativePrompt" },
 ];
 
-export function CanvasScriptNodeContent({ node, batch, pipeline, scale, mentionReferences, onOpen, onCreateImageNodes, onCreateVideoNodes, onGenerateImages, onGenerateVideos, onVideoInputModeChange, onMergeVideos, onCreateActionBoards, onRetryBatch, onRetryBatchItem, onStopBatch, onCancelBatchItem, onAddRow, onRemoveRow, onUpdateRow, onPromptChange, onGenerateScript, onModelChange, onShotDurationChange, onShotCountChange, onComposerHeightChange, onConnectStart, onScrollTopChange, workspaceMode = "professional" }: {
+export function CanvasScriptNodeContent({ node, batch, pipeline, scale, mentionReferences, onOpen, onCreateImageNodes, onCreateVideoNodes, onGenerateImages, onGenerateVideos, onVideoInputModeChange, onMergeVideos, onCreateActionBoards, onRetryBatch, onRetryBatchItem, onStopBatch, onCancelBatchItem, onAddRow, onRemoveRow, onUpdateRow, onPromptChange, onGenerateScript, onModelChange, onShotDurationChange, onShotCountChange, onComposerHeightChange, onConnectStart, onScrollTopChange, onImportExcel, workspaceMode = "professional" }: {
     node: CanvasNodeData;
     batch?: CanvasGenerationBatch;
     pipeline: CanvasStoryboardPipelineProgress;
@@ -89,6 +89,7 @@ export function CanvasScriptNodeContent({ node, batch, pipeline, scale, mentionR
     onComposerHeightChange: (height: number) => void;
     onConnectStart: (event: ReactPointerEvent, rowId: string, handleType: "source" | "target") => void;
     onScrollTopChange: (scrollTop: number) => void;
+    onImportExcel: () => void;
     workspaceMode?: CanvasWorkspaceMode;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -121,6 +122,8 @@ export function CanvasScriptNodeContent({ node, batch, pipeline, scale, mentionR
     const canMerge = pipeline.successfulVideoNodeIds.length >= 2 && pipeline.final.success === 0;
     const allRowIds = pipeline.rows.map((item) => item.row.id);
     const moreMenuItems: MenuProps["items"] = [
+        { key: "import-excel", icon: <Upload className="size-3.5" />, label: "导入 Excel", onClick: () => onImportExcel() },
+        { type: "divider" },
         { key: "generate-images", icon: <ImageIcon className="size-3.5" />, label: "生成未完成分镜图", disabled: pipelineDisabled || pipeline.images.incomplete === 0, onClick: () => onGenerateImages(allRowIds) },
         { key: "generate-videos", icon: <Video className="size-3.5" />, label: "生成未完成视频", disabled: pipelineDisabled || pipeline.videos.incomplete === 0, onClick: () => onGenerateVideos(allRowIds) },
         { key: "merge", icon: <Merge className="size-3.5" />, label: pipeline.final.success ? "成片已完成" : pipeline.successfulVideoNodeIds.length >= 2 ? `合并 ${pipeline.successfulVideoNodeIds.length} 段视频` : "合并成片（至少 2 段视频）", disabled: !canMerge, onClick: () => onMergeVideos() },
@@ -381,7 +384,7 @@ function batchItemTone(item?: CanvasGenerationBatchItem): CanvasNodeStatus | und
     return "loading";
 }
 
-export function CanvasScriptEditor({ node, open, onClose, onUpdateRows, onVisibleColumnsChange, onGenerateImages, onGenerateVideos, onVideoInputModeChange }: {
+export function CanvasScriptEditor({ node, open, onClose, onUpdateRows, onVisibleColumnsChange, onGenerateImages, onGenerateVideos, onVideoInputModeChange, onImportExcel }: {
     node: CanvasNodeData | null;
     open: boolean;
     onClose: () => void;
@@ -390,6 +393,7 @@ export function CanvasScriptEditor({ node, open, onClose, onUpdateRows, onVisibl
     onGenerateImages: (rowIds: string[]) => void;
     onGenerateVideos: (rowIds: string[]) => void;
     onVideoInputModeChange: (mode: StoryboardVideoInputMode) => void;
+    onImportExcel?: () => void;
 }) {
     const [query, setQuery] = useState("");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -442,6 +446,7 @@ export function CanvasScriptEditor({ node, open, onClose, onUpdateRows, onVisibl
                 <Input.Search className="w-72" allowClear placeholder="筛选画面、台词或提示词" value={query} onChange={(event) => setQuery(event.target.value)} />
                 <Checkbox.Group className="script-column-picker" options={columnOptions} value={visibleColumns} onChange={(values) => onVisibleColumnsChange(values as StoryboardColumn[])} />
                 <span className="min-w-0 flex-1" />
+                {onImportExcel ? <Button icon={<Upload className="size-4" />} onClick={onImportExcel}>导入 Excel</Button> : null}
                 <Button icon={<Plus className="size-4" />} onClick={() => onUpdateRows([...rows, editorRow(rows.length + 1)])}>新增镜头</Button>
                 <Button icon={<ImageIcon className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateImages(selectedIds)}>生成{videoInputMode === "keyframe" ? "首帧" : "分镜图"}</Button>
                 <Segmented<StoryboardVideoInputMode> value={videoInputMode} options={[{ value: "direct", label: "直接生成" }, { value: "keyframe", label: "先做首帧" }]} onChange={onVideoInputModeChange} />
