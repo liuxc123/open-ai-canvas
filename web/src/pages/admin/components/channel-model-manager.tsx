@@ -344,9 +344,7 @@ function capabilityLabel(value: ChannelModel["capability"]) {
 
 function billingSummary(item: ChannelModel) {
     if (item.billingMode === "formula") {
-        const formula = item.formulaConfig?.formula || "";
-        const display = formula.length > 40 ? formula.slice(0, 40) + "…" : formula;
-        return <Tag color="purple">公式: {display || "未配置"}</Tag>;
+        return "公式计费";
     }
     if (item.billingMode !== "token") {
         return `${formatCredits(item.unitPriceMicrocredits)} 积分 / ${item.billingMode === "per_second" ? "秒" : "次"}`;
