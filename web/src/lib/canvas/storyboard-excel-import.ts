@@ -297,3 +297,40 @@ export function downloadStoryboardTemplate(): void {
     const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
     saveAs(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), "分镜脚本模板.xlsx");
 }
+
+/**
+ * 将分镜脚本数据导出为 Excel 文件并下载
+ */
+export function exportStoryboardExcel(rows: StoryboardRow[], title?: string): void {
+    if (!rows.length) return;
+
+    // 表头行：使用中文标签
+    const headers = IMPORTABLE_FIELDS.map((field) => IMPORTABLE_FIELD_LABELS[field]);
+
+    // 数据行：按 IMPORTABLE_FIELDS 顺序提取每个字段的值
+    const dataRows = rows.map((row) =>
+        IMPORTABLE_FIELDS.map((field) => {
+            const value = row[field];
+            if (field === "shotNumber" || field === "durationSeconds") {
+                return Number(value) || (field === "durationSeconds" ? 6 : 0);
+            }
+            return String(value || "");
+        }),
+    );
+
+    const allData = [headers, ...dataRows];
+    const worksheet = XLSX.utils.aoa_to_sheet(allData);
+
+    // 设置列宽
+    worksheet["!cols"] = IMPORTABLE_FIELDS.map((field) => ({
+        wch: field === "plotDescription" || field === "imageGenerationPrompt" || field === "videoMotionPrompt" ? 40 : field === "dialogue" ? 30 : 15,
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const sheetName = "分镜脚本";
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+
+    const fileName = title ? `${title}.xlsx` : `分镜脚本_${new Date().toLocaleDateString("zh-CN").replace(/\//g, "-")}.xlsx`;
+    const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+    saveAs(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), fileName);
+}

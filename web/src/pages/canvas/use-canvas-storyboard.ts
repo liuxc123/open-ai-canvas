@@ -9,7 +9,7 @@ import {
     generationTaskMetadata,
     resetGenerationTaskMetadata,
 } from "@/lib/canvas/canvas-project-generation";
-import { parseStoryboardExcel, pickExcelFile, type ExcelImportResult } from "@/lib/canvas/storyboard-excel-import";
+import { parseStoryboardExcel, pickExcelFile, exportStoryboardExcel, type ExcelImportResult } from "@/lib/canvas/storyboard-excel-import";
 import {
     cinematicStoryboardColumns,
     createCanvasNode,
@@ -100,9 +100,7 @@ export function useCanvasStoryboard({
     }, [nodesRef, setConnections, updateScriptRows]);
 
     const importScriptExcel = useCallback(async (nodeId: string) => {
-        console.log("[importScriptExcel] called, nodeId:", nodeId);
         const file = await pickExcelFile();
-        console.log("[importScriptExcel] picked file:", file?.name || "null");
         if (!file) return;
         try {
             const result = await parseStoryboardExcel(file);
@@ -132,6 +130,21 @@ export function useCanvasStoryboard({
         setExcelImportResult(null);
         setExcelImportNodeId(null);
     }, []);
+
+    const exportScriptExcel = useCallback((nodeId: string) => {
+        const scriptNode = nodesRef.current.find((node) => node.id === nodeId && node.type === CanvasNodeType.Script);
+        const rows = scriptNode?.metadata?.storyboard?.rows || [];
+        if (!rows.length) {
+            message.warning("没有可导出的分镜数据");
+            return;
+        }
+        try {
+            exportStoryboardExcel(rows, scriptNode?.title);
+            message.success(`已导出 ${rows.length} 个镜头`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "导出 Excel 失败");
+        }
+    }, [message, nodesRef]);
 
     const addScriptRow = useCallback((nodeId: string) => {
         updateScriptRows(nodeId, (rows) => [...rows, createStoryboardRow(rows.length + 1)]);
@@ -522,6 +535,7 @@ export function useCanvasStoryboard({
         createScriptImageNodes,
         createScriptVideoNodes,
         excelImportResult,
+        exportScriptExcel,
         generateScriptImages,
         generateScriptRows,
         generateScriptVideos,

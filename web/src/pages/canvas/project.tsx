@@ -1195,7 +1195,7 @@ function InfiniteCanvasPage() {
         handleGenerateNode,
     });
 
-    const { addScriptRow, cancelExcelImport, confirmExcelImport, createAndGenerateScriptVideos, createScriptActionBoards, createScriptImageNodes, createScriptVideoNodes, excelImportResult, generateScriptImages, generateScriptRows, generateScriptVideos, importScriptExcel, removeScriptRow, replaceScriptRows, updateScriptRow } =
+    const { addScriptRow, cancelExcelImport, confirmExcelImport, createAndGenerateScriptVideos, createScriptActionBoards, createScriptImageNodes, createScriptVideoNodes, excelImportResult, exportScriptExcel, generateScriptImages, generateScriptRows, generateScriptVideos, importScriptExcel, removeScriptRow, replaceScriptRows, updateScriptRow } =
         useCanvasStoryboard({
             projectId,
             nodesRef,
@@ -1345,6 +1345,7 @@ function InfiniteCanvasPage() {
                         onConnectStart={(event, rowId, handleType) => handleConnectStart(event, contentNode.id, handleType, rowId === "context" ? "storyboard:context" : `row:${rowId}`)}
                         onScrollTopChange={(scrollTop) => setScriptScrollTopById((current) => (current[contentNode.id] === scrollTop ? current : { ...current, [contentNode.id]: scrollTop }))}
                         onImportExcel={() => void importScriptExcel(contentNode.id)}
+                        onExportExcel={() => exportScriptExcel(contentNode.id)}
                     />
                 );
             }
@@ -2076,6 +2077,7 @@ function InfiniteCanvasPage() {
                         }}
                         onVideoInputModeChange={(storyboardVideoInputMode) => activeScriptNode && handleConfigNodeChange(activeScriptNode.id, { storyboardVideoInputMode })}
                         onImportExcel={() => activeScriptNode && void importScriptExcel(activeScriptNode.id)}
+                        onExportExcel={() => activeScriptNode && exportScriptExcel(activeScriptNode.id)}
                     />
 
                     <StoryboardExcelImportModal

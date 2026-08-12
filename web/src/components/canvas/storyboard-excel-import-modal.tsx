@@ -63,10 +63,9 @@ export function StoryboardExcelImportModal({
         onConfirm(rows, mode);
     }, [importResult, mapping, mode, onConfirm]);
 
-    if (!importResult) return null;
-
     // 预览表格列
     const previewColumns: ColumnsType<PreviewRow> = useMemo(() => {
+        if (!importResult) return [];
         const cols: ColumnsType<PreviewRow> = [];
         importResult.headers.forEach((header, colIndex) => {
             const field = mapping[colIndex];
@@ -81,13 +80,15 @@ export function StoryboardExcelImportModal({
             });
         });
         return cols;
-    }, [importResult.headers, mapping]);
+    }, [importResult, mapping]);
 
     // 预览数据转换为 Table 需要的格式
     const previewDataSource = useMemo<PreviewRow[]>(
         () => previewRows.map((row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, String(v || "")]))) as PreviewRow[],
         [previewRows],
     );
+
+    if (!importResult) return null;
 
     return (
         <Modal

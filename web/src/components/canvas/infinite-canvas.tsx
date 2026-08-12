@@ -193,6 +193,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "dots"
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest("[data-canvas-no-zoom]")) return;
         if (target?.closest("[data-connection-create-menu]")) return;
+        if (target?.closest(".ant-dropdown-menu,.ant-popover,.ant-modal,.ant-select-dropdown,.ant-cascader-menus,.ant-mentions-dropdown,.ant-picker-dropdown")) return;
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
         const isTouch = event.pointerType === "touch";
 
