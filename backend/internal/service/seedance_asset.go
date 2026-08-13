@@ -32,6 +32,8 @@ type seedanceCreateAssetRequest struct {
 	URL           string `json:"URL"`
 	GroupType     string `json:"GroupType"`
 	MediaAssetsID int    `json:"media_assets_id"`
+	ModelID       string `json:"model_id"`
+	ModelName     string `json:"model_name"`
 }
 
 type seedanceCreateAssetResponse struct {
@@ -43,7 +45,13 @@ type seedanceCreateAssetResponse struct {
 		Version   string `json:"Version"`
 	} `json:"ResponseMetadata"`
 	Result struct {
-		ID string `json:"Id"`
+		ID      string `json:"Id"`
+		GroupID string `json:"GroupId"`
+		Status  string `json:"Status"`
+		Error   *struct {
+			Code    string `json:"Code"`
+			Message string `json:"Message"`
+		} `json:"Error"`
 	} `json:"Result"`
 	MaterialStatus  string `json:"material_status"`
 	MediaAssetsID   int    `json:"media_assets_id"`
@@ -51,7 +59,9 @@ type seedanceCreateAssetResponse struct {
 }
 
 type seedanceGetAssetRequest struct {
-	ID string `json:"Id"`
+	ID        string `json:"Id"`
+	ModelID   string `json:"model_id"`
+	ModelName string `json:"model_name"`
 }
 
 type seedanceGetAssetResponse struct {
@@ -63,18 +73,19 @@ type seedanceGetAssetResponse struct {
 		Version   string `json:"Version"`
 	} `json:"ResponseMetadata"`
 	Result struct {
-		ID         string `json:"Id"`
-		Name       string `json:"Name"`
-		URL        string `json:"URL"`
-		AssetType  string `json:"AssetType"`
-		GroupID    string `json:"GroupId"`
-		Status     string `json:"Status"`
-		Moderation struct {
-			Strategy string `json:"Strategy"`
-		} `json:"Moderation"`
-		CreateTime  string `json:"CreateTime"`
-		UpdateTime  string `json:"UpdateTime"`
-		ProjectName string `json:"ProjectName"`
+		ID        string `json:"Id"`
+		Name      string `json:"Name"`
+		URL       string `json:"URL"`
+		AssetType string `json:"AssetType"`
+		GroupID   string `json:"GroupId"`
+		Status    string `json:"Status"`
+		Duration  *int   `json:"Duration"`
+		Error     *struct {
+			Code    string `json:"Code"`
+			Message string `json:"Message"`
+		} `json:"Error"`
+		CreateTime string `json:"CreateTime"`
+		UpdateTime string `json:"UpdateTime"`
 	} `json:"Result"`
 }
 
@@ -93,7 +104,7 @@ type seedanceAssetProtocol interface {
 	// ParseCreateResponse 从该格式的响应中提取注册结果
 	ParseCreateResponse(body []byte) (*seedanceAssetRegistration, error)
 	// BuildGetRequest 构造查询请求体
-	BuildGetRequest(upstreamAssetID string) (interface{}, error)
+	BuildGetRequest(upstreamAssetID string, modelName string) (interface{}, error)
 	// ParseGetResponse 从查询响应中提取状态
 	ParseGetResponse(body []byte) (*seedanceAssetStatusResult, error)
 	// MapStatus 将上游原始状态映射为标准状态
@@ -110,6 +121,7 @@ type seedanceAssetParams struct {
 	GroupType    string
 	Seq          int64 // 自增序列
 	ResourceHash string
+	ModelName    string // 模型名称（同时用于 model_id 和 model_name）
 }
 
 // seedanceAssetRegistration 注册素材的统一出参（与协议格式无关）
@@ -118,6 +130,7 @@ type seedanceAssetRegistration struct {
 	Status          string // 标准化状态
 	RawStatus       string // 上游原始状态
 	MediaAssetsID   int
+	ErrorMessage    string // 上游返回的错误信息（Status=Failed 时）
 }
 
 // seedanceAssetStatusResult 查询素材的统一出参（与协议格式无关）
@@ -128,6 +141,7 @@ type seedanceAssetStatusResult struct {
 	Name            string
 	URL             string
 	CreateTime      string
+	ErrorMessage    string // 上游返回的错误信息（Status=Failed 时）
 }
 
 // resolveSeedanceAssetProtocol 根据 MaterialAPIFormat 选择协议适配器。
@@ -153,6 +167,8 @@ func (seedanceAssetV1) BuildCreateRequest(params seedanceAssetParams) (interface
 		URL:           params.URL,
 		GroupType:     params.GroupType,
 		MediaAssetsID: int(params.Seq),
+		ModelID:       params.ModelName,
+		ModelName:     params.ModelName,
 	}, nil
 }
 
@@ -161,29 +177,54 @@ func (seedanceAssetV1) ParseCreateResponse(body []byte) (*seedanceAssetRegistrat
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, err
 	}
-	assetID := strings.TrimSpace(resp.UpstreamAssetID)
+	assetID := strings.TrimSpace(resp.Result.ID)
 	if assetID == "" {
-		assetID = strings.TrimSpace(resp.Result.ID)
+		assetID = strings.TrimSpace(resp.UpstreamAssetID)
 	}
 	if assetID == "" {
 		return nil, errors.New("上游未返回资产 ID")
 	}
+	// 优先使用 Result.Status，旧版兼容顶层 MaterialStatus
+	rawStatus := strings.TrimSpace(resp.Result.Status)
+	if rawStatus == "" {
+		rawStatus = strings.TrimSpace(resp.MaterialStatus)
+	}
+	// 空值默认 submitted（刚提交，等待审核）
+	status := "submitted"
+	if rawStatus != "" {
+		status = mapSeedanceAssetStatus(rawStatus)
+	}
+	// 提取错误信息
+	errMsg := ""
+	if resp.Result.Error != nil && resp.Result.Error.Message != "" {
+		errMsg = resp.Result.Error.Message
+	}
 	return &seedanceAssetRegistration{
 		UpstreamAssetID: assetID,
-		Status:          defaultString(resp.MaterialStatus, "submitted"),
-		RawStatus:       resp.MaterialStatus,
+		Status:          status,
+		RawStatus:       rawStatus,
 		MediaAssetsID:   resp.MediaAssetsID,
+		ErrorMessage:    errMsg,
 	}, nil
 }
 
-func (seedanceAssetV1) BuildGetRequest(upstreamAssetID string) (interface{}, error) {
-	return seedanceGetAssetRequest{ID: upstreamAssetID}, nil
+func (seedanceAssetV1) BuildGetRequest(upstreamAssetID string, modelName string) (interface{}, error) {
+	return seedanceGetAssetRequest{
+		ID:        upstreamAssetID,
+		ModelID:   modelName,
+		ModelName: modelName,
+	}, nil
 }
 
 func (seedanceAssetV1) ParseGetResponse(body []byte) (*seedanceAssetStatusResult, error) {
 	var resp seedanceGetAssetResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, err
+	}
+	// 提取错误信息
+	errMsg := ""
+	if resp.Result.Error != nil && resp.Result.Error.Message != "" {
+		errMsg = resp.Result.Error.Message
 	}
 	return &seedanceAssetStatusResult{
 		UpstreamAssetID: resp.Result.ID,
@@ -192,6 +233,7 @@ func (seedanceAssetV1) ParseGetResponse(body []byte) (*seedanceAssetStatusResult
 		Name:            resp.Result.Name,
 		URL:             resp.Result.URL,
 		CreateTime:      resp.Result.CreateTime,
+		ErrorMessage:    errMsg,
 	}, nil
 }
 
@@ -311,7 +353,7 @@ func (s *Service) callSeedanceCreateAsset(ctx context.Context, config providerCo
 func (s *Service) callSeedanceGetAsset(ctx context.Context, config providerConfig, protocol seedanceAssetProtocol, upstreamAssetID string) (*seedanceAssetStatusResult, error) {
 	baseURL := seedanceMaterialBaseURL(config)
 	url := strings.TrimRight(baseURL, "/") + protocol.GetPath()
-	reqBody, err := protocol.BuildGetRequest(upstreamAssetID)
+	reqBody, err := protocol.BuildGetRequest(upstreamAssetID, config.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -444,6 +486,7 @@ func (s *Service) registerAndPollAsset(ctx context.Context, userID string, resou
 		URL:       signedURL,
 		GroupType: "AIGC",
 		Seq:       record.Seq,
+		ModelName: config.Model,
 	})
 	if err != nil {
 		record.Status = "failed"
@@ -456,6 +499,7 @@ func (s *Service) registerAndPollAsset(ctx context.Context, userID string, resou
 	record.UpstreamAssetID = reg.UpstreamAssetID
 	record.Status = reg.Status
 	record.MediaAssetsID = reg.MediaAssetsID
+	record.ErrorResponse = reg.ErrorMessage
 	record.UpdatedAt = time.Now()
 	if err := s.repo.SaveSeedanceAsset(record); err != nil {
 		return nil, fmt.Errorf("更新资产记录失败：%w", err)
@@ -469,10 +513,10 @@ func (s *Service) pollAndUpdateAsset(ctx context.Context, asset *model.SeedanceA
 	if asset.UpstreamAssetID == "" {
 		return asset, errors.New("资产记录缺少 upstream_asset_id，无法轮询")
 	}
-	status, err := s.pollSeedanceAssetStatus(ctx, config, protocol, asset.UpstreamAssetID)
+	status, errMsg, err := s.pollSeedanceAssetStatus(ctx, config, protocol, asset.UpstreamAssetID)
 	if err != nil {
 		asset.Status = "failed"
-		asset.ErrorResponse = err.Error()
+		asset.ErrorResponse = errMsg
 		asset.UpdatedAt = time.Now()
 		_ = s.repo.SaveSeedanceAsset(asset)
 		return asset, err
@@ -491,30 +535,35 @@ func (s *Service) pollAndUpdateAsset(ctx context.Context, asset *model.SeedanceA
 }
 
 // pollSeedanceAssetStatus 轮询 get_asset 直到 approved / failed / 超时。
-func (s *Service) pollSeedanceAssetStatus(ctx context.Context, config providerConfig, protocol seedanceAssetProtocol, upstreamAssetID string) (string, error) {
+// 返回 (状态, 上游错误信息, error)。
+func (s *Service) pollSeedanceAssetStatus(ctx context.Context, config providerConfig, protocol seedanceAssetProtocol, upstreamAssetID string) (string, string, error) {
 	deadline := time.Now().Add(seedanceAssetPollTimeout)
 	interval := seedanceAssetPollMinInterval
 	for time.Now().Before(deadline) {
 		result, err := s.callSeedanceGetAsset(ctx, config, protocol, upstreamAssetID)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		status := result.Status
 		switch status {
 		case "approved":
-			return status, nil
+			return status, "", nil
 		case "failed":
-			return status, errors.New("Seedance 资产审核失败")
+			errMsg := result.ErrorMessage
+			if errMsg == "" {
+				errMsg = "Seedance 资产审核失败"
+			}
+			return status, errMsg, errors.New(errMsg)
 		}
 		if err := sleepContext(ctx, interval); err != nil {
-			return "", err
+			return "", "", err
 		}
 		interval += 1 * time.Second
 		if interval > seedanceAssetPollMaxInterval {
 			interval = seedanceAssetPollMaxInterval
 		}
 	}
-	return "failed", errors.New("Seedance 资产审核超时")
+	return "failed", "Seedance 资产审核超时", errors.New("Seedance 资产审核超时")
 }
 
 // refreshSeedanceAssetStatus 调 get_asset 刷新单个资产状态并写回数据库。
@@ -535,7 +584,10 @@ func (s *Service) refreshSeedanceAssetStatus(ctx context.Context, asset *model.S
 			asset.ApprovedAt = &now
 			asset.ErrorResponse = ""
 		} else if status == "failed" {
-			asset.ErrorResponse = "审核失败"
+			asset.ErrorResponse = result.ErrorMessage
+			if asset.ErrorResponse == "" {
+				asset.ErrorResponse = "审核失败"
+			}
 		}
 		_ = s.repo.SaveSeedanceAsset(asset)
 	}
@@ -630,6 +682,7 @@ func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, 
 		URL:       signedURL,
 		GroupType: "AIGC",
 		Seq:       record.Seq,
+		ModelName: config.Model,
 	})
 	if err != nil {
 		record.Status = "failed"
@@ -641,6 +694,7 @@ func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, 
 	record.UpstreamAssetID = reg.UpstreamAssetID
 	record.Status = reg.Status
 	record.MediaAssetsID = reg.MediaAssetsID
+	record.ErrorResponse = reg.ErrorMessage
 	record.UpdatedAt = time.Now()
 	if err := s.repo.SaveSeedanceAsset(record); err != nil {
 		return nil, fmt.Errorf("更新资产记录失败：%w", err)
