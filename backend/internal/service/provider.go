@@ -1575,7 +1575,7 @@ func newAPIVideoResultURL(state map[string]interface{}) string {
 
 func nestedNewAPIVideoResultURL(payload map[string]interface{}, depth, maxDepth int) string {
 	if depth < maxDepth {
-		for _, key := range []string{"data", "result", "video", "metadata"} {
+		for _, key := range []string{"data", "result", "results", "video", "metadata", "content", "output"} {
 			if nested, ok := payload[key].(map[string]interface{}); ok {
 				if videoURL := nestedNewAPIVideoResultURL(nested, depth+1, maxDepth); videoURL != "" {
 					return videoURL
