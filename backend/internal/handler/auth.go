@@ -742,7 +742,11 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	for _, key := range []string{"key", "api_key", "access_token", "token"} {
 		query.Del(key)
 	}
-	target := strings.TrimRight(channel.BaseURL, "/") + path
+	base := strings.TrimRight(channel.BaseURL, "/")
+	if !strings.HasSuffix(base, "/v1") && !strings.HasSuffix(base, "/v1beta") && !strings.HasSuffix(base, "/api/v3") && !strings.HasSuffix(base, "/api/plan/v3") {
+		base += "/v1"
+	}
+	target := base + path
 	if encodedQuery := query.Encode(); encodedQuery != "" {
 		target += "?" + encodedQuery
 	}
