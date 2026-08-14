@@ -63,14 +63,13 @@ export function useRegisterSeedanceAssetsBatch() {
             // 失效所有批量查询缓存（用前缀匹配，不限定 resourceId 数组）
             queryClient.invalidateQueries({ queryKey: ["seedance-asset-batch"] });
 
-            // 统计结果
+            // 统计即时结果
             const successCount = data.results.filter((r) => r.asset).length;
             const failCount = data.results.filter((r) => r.error).length;
             if (failCount > 0) {
-                const failedNames = data.results.filter((r) => r.error).map((r) => r.resourceId).join(", ");
-                message.warning(`${successCount} 个素材已提交注册，${failCount} 个失败：${failedNames}`);
+                message.warning(`${successCount} 个素材正在注册中，${failCount} 个失败`);
             } else {
-                message.success(`${successCount} 个素材已提交注册，等待审核中`);
+                message.success(`${successCount} 个素材正在注册中，请等待审核`);
             }
         },
         onError: (error) => {

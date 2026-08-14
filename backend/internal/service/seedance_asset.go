@@ -455,29 +455,55 @@ func (s *Service) registerAndPollAsset(ctx context.Context, userID string, resou
 		apiVersion = "v1"
 	}
 	apiFormat := strings.TrimSpace(config.MaterialAPIFormat)
-	// 先写入 SeedanceAsset 记录获取 Seq
-	record := &model.SeedanceAsset{
-		ID:                 newID(),
-		UserID:             userID,
-		ResourceID:         resourceID,
-		Name:               name,
-		AssetType:          assetType,
-		URL:                signedURL,
-		ResourceHash:       hash,
-		ChannelID:          config.ChannelID,
-		AccountFingerprint: fingerprint,
-		MaterialBaseURL:    seedanceMaterialBaseURL(config),
-		MaterialAPIVersion: apiVersion,
-		MaterialAPIFormat:  apiFormat,
-		GroupType:          "AIGC",
-		Status:             "submitting",
-	}
-	if err := s.repo.CreateSeedanceAsset(record); err != nil {
-		// 并发场景：另一个 goroutine 可能已创建同一 (userID, resourceID, fingerprint) 的记录
-		if existing, findErr := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint); findErr == nil && existing != nil {
-			return existing, nil
+	// 查找已有记录（可能是 failed/expired 状态，需复用而非新建以避免唯一约束冲突）
+	existingRecord, _ := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint)
+	var record *model.SeedanceAsset
+	if existingRecord != nil && (existingRecord.Status == "failed" || existingRecord.Status == "expired") {
+		// 复用已有失败/过期记录进行重新注册
+		record = existingRecord
+		record.Name = name
+		record.AssetType = assetType
+		record.URL = signedURL
+		record.ResourceHash = hash
+		record.ChannelID = config.ChannelID
+		record.MaterialBaseURL = seedanceMaterialBaseURL(config)
+		record.MaterialAPIVersion = apiVersion
+		record.MaterialAPIFormat = apiFormat
+		record.Status = "submitting"
+		record.ErrorResponse = ""
+		record.UpstreamAssetID = ""
+		record.MediaAssetsID = 0
+		record.UpdatedAt = time.Now()
+		if err := s.repo.SaveSeedanceAsset(record); err != nil {
+			return nil, fmt.Errorf("更新资产记录失败：%w", err)
 		}
-		return nil, fmt.Errorf("创建资产记录失败：%w", err)
+	} else if existingRecord != nil {
+		// 已有记录处于非重试状态，直接返回
+		return existingRecord, nil
+	} else {
+		record = &model.SeedanceAsset{
+			ID:                 newID(),
+			UserID:             userID,
+			ResourceID:         resourceID,
+			Name:               name,
+			AssetType:          assetType,
+			URL:                signedURL,
+			ResourceHash:       hash,
+			ChannelID:          config.ChannelID,
+			AccountFingerprint: fingerprint,
+			MaterialBaseURL:    seedanceMaterialBaseURL(config),
+			MaterialAPIVersion: apiVersion,
+			MaterialAPIFormat:  apiFormat,
+			GroupType:          "AIGC",
+			Status:             "submitting",
+		}
+		if err := s.repo.CreateSeedanceAsset(record); err != nil {
+			// 并发场景：另一个 goroutine 可能已创建同一 (userID, resourceID, fingerprint) 的记录
+			if ex, findErr := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint); findErr == nil && ex != nil {
+				return ex, nil
+			}
+			return nil, fmt.Errorf("创建资产记录失败：%w", err)
+		}
 	}
 	// 通过 protocol 构造请求并调用 create_asset
 	reg, err := s.callSeedanceCreateAsset(ctx, config, protocol, seedanceAssetParams{
@@ -594,51 +620,51 @@ func (s *Service) refreshSeedanceAssetStatus(ctx context.Context, asset *model.S
 	return status, nil
 }
 
-// registerSeedanceAssetOnly 只注册不等待：create_asset + 写入 submitted 后返回。
-func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, resourceID string, config providerConfig) (*model.SeedanceAsset, error) {
+// prepareSeedanceAssetRecord 处理幂等检查、资源读取并创建/更新 DB 记录为 "submitting" 状态。
+// 返回 (record, params, protocol, skipCreate, error)：
+//   skipCreate=true  表示记录已在终态/进行中，无需调 create_asset，直接返回 record
+//   skipCreate=false 表示记录已就绪，需调用 create_asset
+func (s *Service) prepareSeedanceAssetRecord(userID string, resourceID string, config providerConfig) (*model.SeedanceAsset, seedanceAssetParams, seedanceAssetProtocol, bool, error) {
 	fingerprint := seedanceAccountFingerprint(config)
 	protocol := resolveSeedanceAssetProtocol(config.MaterialAPIFormat)
 
-	// 检查是否已有终态记录
+	// 幂等检查
 	existing, err := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint)
 	if err == nil && existing != nil {
 		if existing.Status == "approved" {
-			// 检查 hash 是否匹配
 			resource, err := s.repo.ResourceForUser(userID, resourceID)
 			if err == nil {
 				currentHash, err := s.resourceHash(resource)
 				if err == nil && currentHash == existing.ResourceHash {
-					return existing, nil
+					return existing, seedanceAssetParams{}, protocol, true, nil
 				}
-				// hash 不匹配，标记 expired
 				existing.Status = "expired"
 				existing.UpdatedAt = time.Now()
 				_ = s.repo.SaveSeedanceAsset(existing)
 			}
 		} else if existing.Status == "submitted" || existing.Status == "processing" || existing.Status == "submitting" {
-			// 已在注册中，直接返回
-			return existing, nil
+			return existing, seedanceAssetParams{}, protocol, true, nil
 		}
 	}
 
 	resource, err := s.repo.ResourceForUser(userID, resourceID)
 	if err != nil {
-		return nil, fmt.Errorf("读取资源失败：%w", err)
+		return nil, seedanceAssetParams{}, nil, false, fmt.Errorf("读取资源失败：%w", err)
 	}
 	if resource.Status != model.ResourceStatusReady {
-		return nil, errors.New("资源尚未上传完成")
+		return nil, seedanceAssetParams{}, nil, false, errors.New("资源尚未上传完成")
 	}
 	assetType, err := protocol.MapAssetType(resource.Kind)
 	if err != nil {
-		return nil, err
+		return nil, seedanceAssetParams{}, nil, false, err
 	}
 	signedURL, err := s.directResourceURL(resource, time.Now().Add(providerResourceURLTTL))
 	if err != nil {
-		return nil, fmt.Errorf("生成资源签名 URL 失败：%w", err)
+		return nil, seedanceAssetParams{}, nil, false, fmt.Errorf("生成资源签名 URL 失败：%w", err)
 	}
 	hash, err := s.resourceHash(resource)
 	if err != nil {
-		return nil, fmt.Errorf("计算资源 hash 失败：%w", err)
+		return nil, seedanceAssetParams{}, nil, false, fmt.Errorf("计算资源 hash 失败：%w", err)
 	}
 	name := resource.ObjectKey
 	if idx := strings.LastIndex(name, "/"); idx >= 0 {
@@ -652,38 +678,68 @@ func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, 
 		apiVersion = "v1"
 	}
 	apiFormat := strings.TrimSpace(config.MaterialAPIFormat)
-	record := &model.SeedanceAsset{
-		ID:                 newID(),
-		UserID:             userID,
-		ResourceID:         resourceID,
-		Name:               name,
-		AssetType:          assetType,
-		URL:                signedURL,
-		ResourceHash:       hash,
-		ChannelID:          config.ChannelID,
-		AccountFingerprint: fingerprint,
-		MaterialBaseURL:    seedanceMaterialBaseURL(config),
-		MaterialAPIVersion: apiVersion,
-		MaterialAPIFormat:  apiFormat,
-		GroupType:          "AIGC",
-		Status:             "submitting",
-	}
-	if err := s.repo.CreateSeedanceAsset(record); err != nil {
-		// 并发场景：另一个 goroutine 可能已创建同一 (userID, resourceID, fingerprint) 的记录
-		if existing, findErr := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint); findErr == nil && existing != nil {
-			return existing, nil
+
+	// 复用已有的 failed/expired 记录进行重新注册，避免唯一约束冲突
+	var record *model.SeedanceAsset
+	if existing != nil && (existing.Status == "failed" || existing.Status == "expired") {
+		record = existing
+		record.Name = name
+		record.AssetType = assetType
+		record.URL = signedURL
+		record.ResourceHash = hash
+		record.ChannelID = config.ChannelID
+		record.MaterialBaseURL = seedanceMaterialBaseURL(config)
+		record.MaterialAPIVersion = apiVersion
+		record.MaterialAPIFormat = apiFormat
+		record.Status = "submitting"
+		record.ErrorResponse = ""
+		record.UpstreamAssetID = ""
+		record.MediaAssetsID = 0
+		record.UpdatedAt = time.Now()
+		if err := s.repo.SaveSeedanceAsset(record); err != nil {
+			return nil, seedanceAssetParams{}, nil, false, fmt.Errorf("更新资产记录失败：%w", err)
 		}
-		return nil, fmt.Errorf("创建资产记录失败：%w", err)
+	} else if existing != nil {
+		return existing, seedanceAssetParams{}, protocol, true, nil
+	} else {
+		record = &model.SeedanceAsset{
+			ID:                 newID(),
+			UserID:             userID,
+			ResourceID:         resourceID,
+			Name:               name,
+			AssetType:          assetType,
+			URL:                signedURL,
+			ResourceHash:       hash,
+			ChannelID:          config.ChannelID,
+			AccountFingerprint: fingerprint,
+			MaterialBaseURL:    seedanceMaterialBaseURL(config),
+			MaterialAPIVersion: apiVersion,
+			MaterialAPIFormat:  apiFormat,
+			GroupType:          "AIGC",
+			Status:             "submitting",
+		}
+		if err := s.repo.CreateSeedanceAsset(record); err != nil {
+			if ex, findErr := s.repo.SeedanceAssetByIdentity(userID, resourceID, fingerprint); findErr == nil && ex != nil {
+				return ex, seedanceAssetParams{}, protocol, true, nil
+			}
+			return nil, seedanceAssetParams{}, nil, false, fmt.Errorf("创建资产记录失败：%w", err)
+		}
 	}
-	// 通过 protocol 构造请求并调用 create_asset
-	reg, err := s.callSeedanceCreateAsset(ctx, config, protocol, seedanceAssetParams{
+
+	params := seedanceAssetParams{
 		Name:      name,
 		AssetType: assetType,
 		URL:       signedURL,
 		GroupType: "AIGC",
 		Seq:       record.Seq,
 		ModelName: config.Model,
-	})
+	}
+	return record, params, protocol, false, nil
+}
+
+// executeSeedanceCreateAsset 调用 create_asset 并将结果写入 DB。
+func (s *Service) executeSeedanceCreateAsset(ctx context.Context, record *model.SeedanceAsset, params seedanceAssetParams, config providerConfig, protocol seedanceAssetProtocol) (*model.SeedanceAsset, error) {
+	reg, err := s.callSeedanceCreateAsset(ctx, config, protocol, params)
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorResponse = err.Error()
@@ -699,6 +755,36 @@ func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, 
 	if err := s.repo.SaveSeedanceAsset(record); err != nil {
 		return nil, fmt.Errorf("更新资产记录失败：%w", err)
 	}
+	return record, nil
+}
+
+// registerSeedanceAssetOnly 同步注册：prepare + create_asset，等待 create_asset 返回。
+func (s *Service) registerSeedanceAssetOnly(ctx context.Context, userID string, resourceID string, config providerConfig) (*model.SeedanceAsset, error) {
+	record, params, protocol, skipCreate, err := s.prepareSeedanceAssetRecord(userID, resourceID, config)
+	if err != nil {
+		return nil, err
+	}
+	if skipCreate {
+		return record, nil
+	}
+	return s.executeSeedanceCreateAsset(ctx, record, params, config, protocol)
+}
+
+// registerSeedanceAssetAsync 异步注册：prepare 同步执行，create_asset 在后台 goroutine 中执行。
+// 立即返回 "submitting" 状态的记录，前端通过轮询获取最终状态。
+func (s *Service) registerSeedanceAssetAsync(userID string, resourceID string, config providerConfig) (*model.SeedanceAsset, error) {
+	record, params, protocol, skipCreate, err := s.prepareSeedanceAssetRecord(userID, resourceID, config)
+	if err != nil {
+		return nil, err
+	}
+	if skipCreate {
+		return record, nil
+	}
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), seedanceCreateAssetTimeout)
+		defer cancel()
+		_, _ = s.executeSeedanceCreateAsset(bgCtx, record, params, config, protocol)
+	}()
 	return record, nil
 }
 
@@ -745,13 +831,13 @@ func (s *Service) RegisterSeedanceAssetsBatch(ctx context.Context, userID string
 				mu.Unlock()
 				return
 			}
-			// 同渠道内并发注册
+			// 同渠道内并发注册（异步：prepare 同步，create_asset 在后台 goroutine 执行）
 			var innerWg sync.WaitGroup
 			for _, idx := range indices {
 				innerWg.Add(1)
 				go func(i int) {
 					defer innerWg.Done()
-					asset, err := s.registerSeedanceAssetOnly(ctx, userID, items[i].ResourceID, config)
+					asset, err := s.registerSeedanceAssetAsync(userID, items[i].ResourceID, config)
 					mu.Lock()
 					if err != nil {
 						results[i] = SeedanceRegisterResult{ResourceID: items[i].ResourceID, Error: err.Error()}

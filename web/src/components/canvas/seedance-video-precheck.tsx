@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { Button, Tooltip } from "antd";
+import { App, Button, Tooltip } from "antd";
 import { CheckCircle2, CircleDashed, Loader2, XCircle } from "lucide-react";
 
 import { useSeedanceAssetBatch, useRegisterSeedanceAssetsBatch } from "@/services/api/seedance-asset";
@@ -26,10 +26,13 @@ export function SeedanceVideoPrecheck({
     const channel = resolveModelChannel(config, config.model);
     const channelId = channel.scope === "system" ? channel.id : "";
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const { message } = App.useApp();
 
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
+    // 记录批量注册后仍处于非终态的 resourceId，轮询刷新到终态后弹完成 toast
+    const pendingRegisterRef = useRef<string[] | null>(null);
 
     const resourceIds = useMemo(
         () => references.map(resourceIdFromReference).filter((id): id is string => Boolean(id)),
@@ -40,6 +43,35 @@ export function SeedanceVideoPrecheck({
     const registerBatch = useRegisterSeedanceAssetsBatch();
 
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
+
+    // 监听轮询数据变化，当批量注册的素材全部到达终态时弹出完成 toast
+    useEffect(() => {
+        const pendingIds = pendingRegisterRef.current;
+        if (!pendingIds || pendingIds.length === 0) return;
+        if (!assets) return;
+
+        const statusMap = new Map<string, string>();
+        for (const a of assets) {
+            if (!statusMap.has(a.resourceId)) statusMap.set(a.resourceId, a.status);
+        }
+
+        const allTerminal = pendingIds.every(
+            (id) =>
+                statusMap.get(id) === "approved" ||
+                statusMap.get(id) === "failed" ||
+                statusMap.get(id) === "expired",
+        );
+        if (!allTerminal) return;
+
+        pendingRegisterRef.current = null;
+        const approved = pendingIds.filter((id) => statusMap.get(id) === "approved").length;
+        const failed = pendingIds.length - approved;
+        if (failed > 0) {
+            message.warning(`注册完成：${approved} 个通过，${failed} 个失败`);
+        } else {
+            message.success(`注册完成：${approved} 个素材全部通过审核`);
+        }
+    }, [assets, message]);
 
     useEffect(() => {
         if (!open) return;
@@ -90,6 +122,7 @@ export function SeedanceVideoPrecheck({
         if (!channelId) return;
         const toRegister = [...unregistered, ...failed.map((a) => a.resourceId)];
         if (toRegister.length === 0) return;
+        pendingRegisterRef.current = toRegister;
         registerBatch.mutate(toRegister.map((id) => ({ resourceId: id, channelId, model: modelOptionName(config.model) })));
     };
 
