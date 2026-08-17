@@ -289,7 +289,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         const height = expanded ? expandedComposerHeight : composerHeight;
         return (
             <>
-                <div className="canvas-node-composer-editor" style={{ height }}>
+                <div className={`canvas-node-composer-editor ${expanded ? "flex min-h-0 flex-1 flex-col" : ""}`} style={expanded ? { minHeight: height } : { height }}>
                     <ConnectedReferenceShelf references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
                     <CanvasResourceMentionTextarea
                         value={prompt}
@@ -365,11 +365,11 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     setExpandedPromptOpen(false);
                 }}
                 styles={{
-                    container: { border: 0, borderRadius: "var(--canvas-composer-radius)", padding: 0, overflow: "hidden", background: "var(--canvas-composer-surface)", boxShadow: "var(--canvas-composer-shadow)" },
-                    body: { minHeight: 0, padding: 0 },
+                    container: { border: 0, borderRadius: "var(--canvas-composer-radius)", padding: 0, overflow: "hidden", background: "var(--canvas-composer-surface)", boxShadow: "var(--canvas-composer-shadow)", height: "90vh" },
+                    body: { minHeight: 0, height: "100%", padding: 0 },
                 }}
             >
-                <div className="flex min-h-0 flex-col gap-2.5 p-3" style={{ color: theme.node.text }}>
+                <div className="flex h-full min-h-0 flex-col gap-2.5 p-3" style={{ color: theme.node.text }}>
                     <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
                     {renderPromptEditor(true)}
                     {mode === "video" && !simpleMode ? (
