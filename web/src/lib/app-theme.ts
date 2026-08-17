@@ -238,6 +238,10 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
                 headerFontSize: 15,
                 bodyPadding: 18,
             },
+            Tooltip: {
+                colorBgSpotlight: dark ? "rgba(69, 69, 71, 0.96)" : "rgba(255, 255, 255, 0.96)",
+                colorTextLightSolid: dark ? "#fafafa" : "#171717",
+            },
         },
     };
 }
