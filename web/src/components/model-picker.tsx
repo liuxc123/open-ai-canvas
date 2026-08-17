@@ -276,14 +276,14 @@ function formatDurationSummary(profile: NonNullable<ReturnType<typeof modelCapab
     return `${profile.duration.min || values[0]}-${profile.duration.max || values[values.length - 1]}s`;
 }
 
-type ModelMenuPrice = { value: number; unit: "次" | "秒" | "百万 Token" };
+type ModelMenuPrice = { value: number; unit: "次" | "秒" | "百万 Token" } | { formula: true };
 
 function modelMenuPrice(config: AiConfig, model: string): ModelMenuPrice | null | undefined {
     if (!model) return undefined;
     const channel = resolveModelChannel(config, model);
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     if (!cost) return channel.scope === "system" ? null : undefined;
-    if (cost.billingMode === "formula") return null;
+    if (cost.billingMode === "formula") return { formula: true };
     if (cost.billingMode === "token") {
         return { value: (cost.outputTokenPriceMicrocredits || 0) / 1_000_000, unit: "百万 Token" };
     }
@@ -301,6 +301,14 @@ function pickerModelOptionLabel(config: AiConfig, model: string, showConfiguredM
 function ModelPrice({ price, compact = false }: { price: ModelMenuPrice | null | undefined; compact?: boolean }) {
     if (price === undefined) return null;
     if (price === null) return compact ? null : <span className="shrink-0 text-[var(--fs-tiny)] text-foreground/40">未配置</span>;
+    if ("formula" in price) {
+        return (
+            <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--fs-tiny)] font-semibold tabular-nums text-amber-600 dark:text-amber-300" title="按公式计费">
+                <Coins className="size-3" />
+                公式计费
+            </span>
+        );
+    }
     return (
         <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--fs-tiny)] font-bold tabular-nums text-amber-600 dark:text-amber-300" title={`每${price.unit}消耗 ${price.value.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 积分`}>
             <Coins className="size-3" />
