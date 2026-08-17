@@ -44,9 +44,7 @@ const PROMPT_REFERENCE_SHELF_HEIGHT = 36;
 const PROMPT_EDITOR_MIN_HEIGHT = 44;
 const PROMPT_EDITOR_EXPANDED_MIN_HEIGHT = 76;
 const PROMPT_EDITOR_LINE_HEIGHT = 20;
-const PROMPT_EDITOR_EXPANDED_LINE_HEIGHT = 24;
 const PROMPT_EDITOR_VERTICAL_PADDING = 12;
-const PROMPT_EDITOR_EXPANDED_VERTICAL_PADDING = 20;
 const PROMPT_EDITOR_MAX_LINES = 8;
 
 export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
@@ -365,11 +363,11 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     setExpandedPromptOpen(false);
                 }}
                 styles={{
-                    container: { border: 0, borderRadius: "var(--canvas-composer-radius)", padding: 0, overflow: "hidden", background: "var(--canvas-composer-surface)", boxShadow: "var(--canvas-composer-shadow)", height: "90vh" },
-                    body: { minHeight: 0, height: "100%", padding: 0 },
+                    container: { border: 0, borderRadius: "var(--canvas-composer-radius)", padding: 0, overflow: "hidden", background: "var(--canvas-composer-surface)", boxShadow: "var(--canvas-composer-shadow)", height: "90vh", display: "flex", flexDirection: "column" },
+                    body: { minHeight: 0, height: "100%", padding: 0, display: "flex", flexDirection: "column", flex: 1 },
                 }}
             >
-                <div className="flex min-h-0 flex-col gap-2.5 p-3" style={{ color: theme.node.text }}>
+                <div className="flex min-h-0 flex-1 flex-col gap-2.5 p-3" style={{ color: theme.node.text }}>
                     <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
                     {renderPromptEditor(true)}
                     {mode === "video" && !simpleMode ? (
@@ -496,11 +494,11 @@ function PromptResizeHandle({ height, min, max, onResize }: { height: number; mi
             onResize(Math.max(min, height - 8));
         } else if (event.key === "ArrowDown") {
             event.preventDefault();
-            onResize(Math.min(max, height + 8));
+            onResize(Number.isFinite(max) ? Math.min(max, height + 8) : height + 8);
         } else if (event.key === "Home") {
             event.preventDefault();
             onResize(min);
-        } else if (event.key === "End") {
+        } else if (event.key === "End" && Number.isFinite(max)) {
             event.preventDefault();
             onResize(max);
         }
@@ -514,8 +512,8 @@ function PromptResizeHandle({ height, min, max, onResize }: { height: number; mi
             aria-label="调整提示词输入高度"
             aria-orientation="horizontal"
             aria-valuemin={min}
-            aria-valuemax={max}
-            aria-valuenow={Math.round(height)}
+            aria-valuemax={Number.isFinite(max) ? max : undefined}
+            aria-valuenow={Number.isFinite(max) ? Math.round(height) : undefined}
             onKeyDown={handleKeyDown}
             onPointerDown={(event) => {
                 if (event.button !== 0) return;
@@ -535,7 +533,7 @@ function PromptResizeHandle({ height, min, max, onResize }: { height: number; mi
                     finishResize(event);
                     return;
                 }
-                onResize(Math.min(max, Math.max(min, drag.startHeight + event.clientY - drag.startY)));
+                onResize(Math.max(min, Number.isFinite(max) ? Math.min(max, drag.startHeight + event.clientY - drag.startY) : drag.startHeight + event.clientY - drag.startY));
             }}
             onPointerUp={finishResize}
             onPointerCancel={finishResize}
@@ -551,7 +549,7 @@ function PromptResizeHandle({ height, min, max, onResize }: { height: number; mi
 function promptEditorBounds(expanded: boolean, hasReferences: boolean) {
     const shelfHeight = hasReferences ? PROMPT_REFERENCE_SHELF_HEIGHT : 0;
     const min = (expanded ? PROMPT_EDITOR_EXPANDED_MIN_HEIGHT : PROMPT_EDITOR_MIN_HEIGHT) + shelfHeight;
-    const max = (expanded ? PROMPT_EDITOR_EXPANDED_LINE_HEIGHT * PROMPT_EDITOR_MAX_LINES + PROMPT_EDITOR_EXPANDED_VERTICAL_PADDING : PROMPT_EDITOR_LINE_HEIGHT * PROMPT_EDITOR_MAX_LINES + PROMPT_EDITOR_VERTICAL_PADDING) + shelfHeight;
+    const max = expanded ? Infinity : (PROMPT_EDITOR_LINE_HEIGHT * PROMPT_EDITOR_MAX_LINES + PROMPT_EDITOR_VERTICAL_PADDING) + shelfHeight;
     return { min, max };
 }
 
