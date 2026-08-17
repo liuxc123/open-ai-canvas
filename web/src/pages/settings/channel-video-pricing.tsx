@@ -1,12 +1,12 @@
 import { useRef, useState } from "react";
-import { App, Button, Drawer, Form, Input, InputNumber, Segmented, Tag, Tooltip } from "antd";
+import { App, Button, Drawer, Input, InputNumber, Segmented, Tag, Tooltip } from "antd";
 import { ChevronRight, FlaskConical, Settings2 } from "lucide-react";
 
 import { testChannelModelConnection } from "@/lib/model-connection-test";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { CapabilityCardPicker, ProtocolCardPicker } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
-import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol } from "@/lib/model-protocols";
+import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, modelProtocolSupportsTokenBilling, type ModelProtocol } from "@/lib/model-protocols";
 import { modelMatchesCapability, modelOptionName, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelCost = NonNullable<ModelChannel["modelCosts"]>[number];
@@ -14,8 +14,8 @@ type ModelCost = NonNullable<ModelChannel["modelCosts"]>[number];
 export function ChannelModelSettings({ channel, onChange }: { channel: ModelChannel; onChange: (costs: ModelCost[]) => void }) {
     const { message } = App.useApp();
     const [testingModel, setTestingModel] = useState("");
-    const [activeModel, setActiveModel] = useState<string | null>(null);
     const formulaTextareaRef = useRef<HTMLTextAreaElement>(null);
+    const [activeModel, setActiveModel] = useState<string | null>(null);
     if (!channel.models.length) return null;
 
     const updateCost = (model: string, patch: Partial<ModelCost>) => {
@@ -47,6 +47,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     const activeProtocol = activeModel ? activeModelCost?.protocol || defaultProtocolForModel(channel, activeModel) : undefined;
     const activeCapability = activeModel ? activeModelCost?.capability || modelProtocolCapability(activeProtocol) || "text" : undefined;
     const activeBillingMode = activeModelCost?.billingMode || "fixed_request";
+    const activeTokenBillingSupported = modelProtocolSupportsTokenBilling(activeCapability, activeProtocol);
 
     const handleBillingModeChange = (value: string | number) => {
         const mode = value as ModelCost["billingMode"];
@@ -58,11 +59,11 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
             patch.outputTokenPriceMicrocredits = 0;
             patch.cachedTokenPriceMicrocredits = 0;
         }
-        updateCost(activeModel!, patch);
+        updateCost(activeModel || "", patch);
     };
 
     return (
-        <div className="mt-3 border-t border-border/70 pt-3">
+        <div className="mt-4">
             <div className="mb-2 flex items-center justify-between gap-3">
                 <div>
                     <div className="text-xs font-medium">模型能力与请求协议</div>
@@ -78,8 +79,8 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                     const capability = cost?.capability || modelProtocolCapability(protocol) || "text";
                     const billingMode = cost?.billingMode || "fixed_request";
                     return (
-                        <div key={model} className="flex min-w-0 items-center gap-3 rounded-md border border-border/70 bg-background/45 px-3 py-2.5">
-                            <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/70 bg-muted/35 text-foreground/65">
+                        <div key={model} className="flex min-w-0 items-center gap-3 rounded-md bg-surface-active px-3 py-2.5 transition-colors hover:bg-surface-hover">
+                            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-foreground/[.045] text-foreground/65">
                                 <Settings2 className="size-4" />
                             </span>
                             <div className="min-w-0 flex-1">
@@ -90,15 +91,6 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                                     <Tag className="mr-0 text-[var(--fs-tiny)]" bordered={false}>
                                         {capabilityLabel(capability)}
                                     </Tag>
-                                    {billingMode === "formula" ? (
-                                        <Tag className="mr-0 text-[var(--fs-tiny)]" color="cyan" bordered={false}>公式计费</Tag>
-                                    ) : billingMode === "token" ? (
-                                        <Tag className="mr-0 text-[var(--fs-tiny)]" color="cyan" bordered={false}>Token 计费</Tag>
-                                    ) : billingMode === "per_second" ? (
-                                        <Tag className="mr-0 text-[var(--fs-tiny)]" color="cyan" bordered={false}>按秒计费</Tag>
-                                    ) : (
-                                        <Tag className="mr-0 text-[var(--fs-tiny)]" color="cyan" bordered={false}>按次计费</Tag>
-                                    )}
                                     <span className="truncate font-mono text-[var(--fs-tiny)] text-foreground/40" title={modelProtocolDefinition(protocol)?.create}>
                                         {modelProtocolDefinition(protocol)?.create || "待配置请求协议"}
                                     </span>
@@ -132,131 +124,89 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                 }
             >
                 {activeModel && activeCapability && activeProtocol ? (
-                    <Form layout="vertical" requiredMark={false}>
-                        <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2.5">
+                    <div className="space-y-4">
+                        <div className="rounded-md bg-surface-active px-3 py-2.5">
                             <div className="text-xs font-medium">模型能力与请求协议</div>
                             <div className="mt-1 text-[var(--fs-tiny)] text-foreground/45">这些设置只影响当前渠道的这个模型，保存后会同步到生成校验。</div>
                         </div>
-                        <Form.Item label="模型能力">
+                        <section className="space-y-2">
+                            <div className="text-xs font-medium">模型能力</div>
                             <CapabilityCardPicker
                                 value={activeCapability}
                                 onChange={(nextCapability) => {
                                     const nextProtocol = MODEL_PROTOCOLS.find((item) => item.value === activeProtocol && item.capability === nextCapability)?.value || MODEL_PROTOCOLS.find((item) => item.capability === nextCapability)?.value;
                                     if (!nextProtocol) return;
-                                    const nextBillingMode = nextCapability === "video" ? activeBillingMode : nextCapability === "text" && activeBillingMode === "token" ? activeBillingMode : (activeBillingMode === "per_second" || activeBillingMode === "token") ? "fixed_request" : activeBillingMode;
                                     updateCost(activeModel, {
                                         protocol: nextProtocol,
                                         capability: nextCapability,
-                                        billingMode: nextBillingMode,
+                                        billingMode: activeBillingMode === "formula" ? "formula" : activeBillingMode === "per_second" && nextCapability === "video" ? "per_second" : activeBillingMode === "token" && modelProtocolSupportsTokenBilling(nextCapability, nextProtocol) ? "token" : "fixed_request",
                                         capabilityConfig: nextCapability === "image" || nextCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined,
                                     });
                                 }}
                             />
-                        </Form.Item>
-                        <Form.Item label="请求协议">
+                        </section>
+                        <section className="space-y-2">
+                            <div className="text-xs font-medium">请求协议</div>
                             <ProtocolCardPicker
                                 capability={activeCapability}
                                 value={activeProtocol}
-                                onChange={(nextProtocol) => updateCost(activeModel, { protocol: nextProtocol, capabilityConfig: activeCapability === "image" || activeCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined })}
+                                onChange={(nextProtocol) => updateCost(activeModel, { protocol: nextProtocol, billingMode: activeBillingMode === "formula" ? "formula" : activeBillingMode === "token" && !modelProtocolSupportsTokenBilling(activeCapability, nextProtocol) ? "fixed_request" : activeBillingMode, capabilityConfig: activeCapability === "image" || activeCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined })}
                             />
-                        </Form.Item>
-                        {activeCapability === "image" || activeCapability === "video" ? (
-                            <Form.Item label={`${activeCapability === "image" ? "图片" : "视频"}能力参数`} required>
-                                <ModelCapabilityEditor capability={activeCapability} model={activeModel} value={activeModelCost?.capabilityConfig || defaultModelCapabilityConfig(activeProtocol, activeModel)} protocol={activeProtocol} onChange={(capabilityConfig) => updateCost(activeModel, { capabilityConfig })} />
-                            </Form.Item>
-                        ) : null}
-                        <Form.Item label="计费方式">
-                            <Segmented
-                                block
-                                options={[
-                                    { label: "按次计费", value: "fixed_request" },
-                                    { label: "按秒计费", value: "per_second", disabled: activeCapability !== "video" },
-                                    { label: "Token 计费", value: "token", disabled: activeCapability !== "text" },
-                                    { label: "公式计费", value: "formula" },
-                                ]}
-                                value={activeBillingMode}
-                                onChange={handleBillingModeChange}
-                            />
-                        </Form.Item>
-                        {activeBillingMode === "token" ? (
-                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                                <Form.Item label="输入 / 百万 Token">
-                                    <InputNumber
-                                        style={{ width: "100%" }}
-                                        min={0}
-                                        max={1_000_000}
-                                        precision={6}
-                                        step={0.1}
-                                        value={activeModelCost ? (activeModelCost.inputTokenPriceMicrocredits || 0) / 1_000_000 : 0}
-                                        onChange={(value) => updateCost(activeModel, { inputTokenPriceMicrocredits: Math.round(Number(value || 0) * 1_000_000) })}
-                                    />
-                                </Form.Item>
-                                <Form.Item label="输出 / 百万 Token">
-                                    <InputNumber
-                                        style={{ width: "100%" }}
-                                        min={0}
-                                        max={1_000_000}
-                                        precision={6}
-                                        step={0.1}
-                                        value={activeModelCost ? (activeModelCost.outputTokenPriceMicrocredits || 0) / 1_000_000 : 0}
-                                        onChange={(value) => updateCost(activeModel, { outputTokenPriceMicrocredits: Math.round(Number(value || 0) * 1_000_000) })}
-                                    />
-                                </Form.Item>
-                                <Form.Item label="缓存 / 百万 Token">
-                                    <InputNumber
-                                        style={{ width: "100%" }}
-                                        min={0}
-                                        max={1_000_000}
-                                        precision={6}
-                                        step={0.1}
-                                        value={activeModelCost ? (activeModelCost.cachedTokenPriceMicrocredits || 0) / 1_000_000 : 0}
-                                        onChange={(value) => updateCost(activeModel, { cachedTokenPriceMicrocredits: Math.round(Number(value || 0) * 1_000_000) })}
-                                    />
-                                </Form.Item>
-                            </div>
-                        ) : activeBillingMode === "formula" ? (
+                        </section>
+                        {activeCapability === "video" ? (
                             <div className="space-y-2">
-                                <div className="text-xs text-foreground/50">点击下方常量可插入到公式中</div>
-                                <FormulaSnippetPicker textareaRef={formulaTextareaRef} />
-                                <Form.Item label="计算公式">
-                                    <Input.TextArea
-                                        ref={(node) => {
-                                            const native = node?.nativeElement;
-                                            if (native && native.tagName === "TEXTAREA") {
-                                                (formulaTextareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = native as HTMLTextAreaElement;
-                                            }
-                                        }}
-                                        autoSize={{ minRows: 2, maxRows: 6 }}
-                                        placeholder="例如：body.duration * 0.5"
-                                        value={activeModelCost?.formulaConfig?.formula || ""}
-                                        onChange={(event) => updateCost(activeModel, { formulaConfig: { formula: event.target.value } })}
+                                <div className="text-xs font-medium">计费方式</div>
+                                <div className="grid gap-2 lg:grid-cols-[176px_1fr]">
+                                    <Segmented
+                                        size="small"
+                                        block
+                                        value={activeBillingMode}
+                                        options={[
+                                            { label: "按次", value: "fixed_request" },
+                                            { label: "按秒", value: "per_second" },
+                                            { label: "Token", value: "token", disabled: !activeTokenBillingSupported },
+                                            { label: "公式", value: "formula" },
+                                        ]}
+                                        onChange={handleBillingModeChange}
                                     />
-                                </Form.Item>
-                                <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-foreground/55 leading-5">
-                                    <div className="font-medium text-foreground/70 mb-1">公式语法说明</div>
-                                    <div>• <code className="text-foreground/80">body.xxx</code> 访问请求体字段，<code className="text-foreground/80">headers["X-Key"]</code> 访问请求头</div>
-                                    <div>• 算术: <code>+ - * /</code> &nbsp; 比较: <code>&gt; &lt; &gt;= &lt;= == !=</code> &nbsp; 逻辑: <code>&& || !</code></div>
-                                    <div>• 条件: <code>条件 ? 真值 : 假值</code>（可嵌套实现多档） &nbsp; 成员: <code>in ["a","b"]</code></div>
-                                    <div>• 函数: <code>ceil floor round abs max min len</code></div>
-                                    <div>• 多档示例: <code>duration &gt; 30 ? 3.0 : (duration &gt; 10 ? 2.0 : 1.0)</code></div>
-                                    <div>• 匹配示例: <code>quality in ["hd","4k"] ? 2.0 : 1.0</code></div>
-                                    <div>• 公式结果单位为积分，如 <code>body.duration * 0.5</code> 表示每秒 0.5 积分</div>
+                                    {activeBillingMode === "formula" ? (
+                                        <div className="space-y-1.5">
+                                            <FormulaSnippetPicker textareaRef={formulaTextareaRef} />
+                                            <Input.TextArea
+                                                ref={(node) => {
+                                                    const native = node?.nativeElement;
+                                                    if (native && native.tagName === "TEXTAREA") {
+                                                        (formulaTextareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = native as HTMLTextAreaElement;
+                                                    }
+                                                }}
+                                                autoSize={{ minRows: 2, maxRows: 6 }}
+                                                placeholder="例如：body.duration * 0.5"
+                                                value={activeModelCost?.formulaConfig?.formula || ""}
+                                                onChange={(event) => updateCost(activeModel, { formulaConfig: { formula: event.target.value } })}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <InputNumber
+                                            size="small"
+                                            min={0}
+                                            max={1_000_000}
+                                            precision={6}
+                                            step={0.1}
+                                            className="w-full"
+                                            placeholder={activeBillingMode === "token" ? "每百万视频 Token 价格" : activeBillingMode === "per_second" ? "每秒价格" : "每次价格"}
+                                            addonAfter={`积分/${activeBillingMode === "token" ? "百万 Token" : activeBillingMode === "per_second" ? "秒" : "次"}`}
+                                            value={activeModelCost ? (activeBillingMode === "token" ? (activeModelCost.outputTokenPriceMicrocredits || 0) : activeModelCost.unitPriceMicrocredits) / 1_000_000 : null}
+                                            onChange={(value) => updateCost(activeModel, activeBillingMode === "token" ? { outputTokenPriceMicrocredits: Math.round(Number(value || 0) * 1_000_000) } : { unitPriceMicrocredits: Math.round(Number(value || 0) * 1_000_000) })}
+                                        />
+                                    )}
                                 </div>
+                                {activeBillingMode === "token" ? <div className="text-[var(--fs-tiny)] text-foreground/45">按火山方舟任务查询响应的 usage.completion_tokens 结算。</div> : null}
                             </div>
-                        ) : (
-                            <Form.Item label={activeBillingMode === "per_second" ? "每秒消耗积分" : "每次消耗积分"}>
-                                <InputNumber
-                                    style={{ width: "100%" }}
-                                    min={0}
-                                    max={1_000_000}
-                                    precision={6}
-                                    step={0.1}
-                                    value={activeModelCost ? activeModelCost.unitPriceMicrocredits / 1_000_000 : null}
-                                    onChange={(value) => updateCost(activeModel, { unitPriceMicrocredits: Math.round(Number(value || 0) * 1_000_000) })}
-                                />
-                            </Form.Item>
-                        )}
-                    </Form>
+                        ) : null}
+                        {activeCapability === "image" || activeCapability === "video" ? (
+                            <ModelCapabilityEditor capability={activeCapability} model={activeModel} value={activeModelCost?.capabilityConfig || defaultModelCapabilityConfig(activeProtocol, activeModel)} protocol={activeProtocol} onChange={(capabilityConfig) => updateCost(activeModel, { capabilityConfig })} />
+                        ) : null}
+                    </div>
                 ) : null}
             </Drawer>
         </div>

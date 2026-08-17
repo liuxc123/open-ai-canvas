@@ -10,6 +10,7 @@ import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { pipelineStatusLabel, type CanvasStoryboardPipelineProgress, type StoryboardPipelineStage } from "@/lib/canvas/canvas-storyboard-progress";
 import { generationErrorMessage, isContentModerationError } from "@/lib/generation-error";
+import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useEffectiveConfig } from "@/stores/use-config-store";
@@ -27,6 +28,7 @@ import type {
     StoryboardShotDuration,
     StoryboardVideoInputMode,
 } from "@/types/canvas";
+import type { TaskStatus } from "@/services/api/task-center";
 
 export const STORYBOARD_ROW_HEIGHT = 48;
 export const STORYBOARD_HEADER_HEIGHT = 124;
@@ -158,9 +160,22 @@ export function CanvasScriptNodeContent({
     const hasFailedBatchItems = Boolean(batch?.items.some((item) => item.status === "failed"));
     const hasWaitingBatchItems = Boolean(batch?.items.some((item) => item.status === "waiting" || item.status === "submitting"));
     const hasActiveBatchItems = Boolean(batch?.items.some((item) => item.status === "waiting" || item.status === "submitting" || item.status === "queued" || item.status === "running"));
+    const taskStatus = node.metadata?.taskStatus;
+    const displayStatus: TaskStatus = taskStatus === "queued" || taskStatus === "succeeded" || taskStatus === "failed" || taskStatus === "cancelled" ? taskStatus : "running";
+    const displayTask = node.metadata?.taskId
+        ? {
+              provider: node.metadata.taskProvider,
+              status: displayStatus,
+              stage: node.metadata.taskStage,
+              officialStatus: node.metadata.taskOfficialStatus,
+              errorCode: node.metadata.taskErrorCode,
+          }
+        : null;
     const taskFeedback =
         node.metadata?.status === "loading"
-            ? `${node.metadata.taskStage || "正在创建任务"}${typeof node.metadata.taskProgress === "number" ? ` · ${node.metadata.taskProgress}%` : ""}`
+            ? displayTask
+                ? `${generationTaskStageLabel(displayTask)}${generationTaskShowsProgress(displayTask) && typeof node.metadata.taskProgress === "number" ? ` · ${node.metadata.taskProgress}%` : ""}`
+                : "正在创建任务"
             : node.metadata?.status === "error"
               ? generationErrorMessage(node.metadata.errorDetails)
               : "";
@@ -250,6 +265,7 @@ export function CanvasScriptNodeContent({
                         className="grid size-7 place-items-center rounded outline-none transition hover:bg-black/5 focus-visible:ring-2 dark:hover:bg-white/10"
                         style={{ "--tw-ring-color": theme.node.muted } as CSSProperties}
                         onMouseDown={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => {
                             event.stopPropagation();
                             onOpen();
@@ -259,13 +275,17 @@ export function CanvasScriptNodeContent({
                         <Expand className="size-3.5" />
                     </button>
                 </Tooltip>
-                <Dropdown menu={{ items: moreMenuItems }} trigger={["click"]} placement="bottomRight" open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
+                <Dropdown open={moreMenuOpen} onOpenChange={setMoreMenuOpen} menu={{ items: moreMenuItems, onClick: () => setMoreMenuOpen(false) }} trigger={["click"]} placement="bottomRight">
                     <button
                         type="button"
                         className="grid size-7 place-items-center rounded outline-none transition hover:bg-black/5 focus-visible:ring-2 dark:hover:bg-white/10"
                         style={{ "--tw-ring-color": theme.node.muted } as CSSProperties}
                         onMouseDown={(event) => event.stopPropagation()}
-                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            setMoreMenuOpen(true);
+                        }}
                         aria-label="更多操作"
                     >
                         <MoreHorizontal className="size-3.5" />
@@ -675,7 +695,7 @@ export function CanvasScriptEditor({
             title: option.label,
             dataIndex: option.value,
             key: option.value,
-            width: option.value === "shotNumber" ? 72 : option.value === "durationSeconds" ? 140 : option.value === "plotDescription" || option.value === "dialogue" || option.value === "timeBeats" || option.value.endsWith("Prompt") ? 260 : 170,
+            width: option.value === "shotNumber" ? 72 : option.value === "durationSeconds" ? 100 : option.value === "plotDescription" || option.value === "dialogue" || option.value === "timeBeats" || option.value.endsWith("Prompt") ? 260 : 170,
             fixed: option.value === "shotNumber" ? ("left" as const) : undefined,
             render: (_: unknown, row: StoryboardRow) =>
                 option.value === "shotNumber" ? (

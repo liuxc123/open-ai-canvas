@@ -30,6 +30,7 @@ export type UserOSSSetting = {
     provider: StorageProvider;
     region: string;
     endpoint: string;
+    cdnBaseUrl: string;
     bucket: string;
     accessKeyId: string;
     hasAccessKeySecret: boolean;
@@ -38,8 +39,13 @@ export type UserOSSSetting = {
     updatedAt?: string;
 };
 
-export type UserOSSSettingInput = Pick<UserOSSSetting, "enabled" | "provider" | "region" | "endpoint" | "bucket" | "accessKeyId" | "pathPrefix" | "publicBaseUrl"> & {
+export type UserOSSSettingInput = Pick<UserOSSSetting, "enabled" | "provider" | "region" | "endpoint" | "cdnBaseUrl" | "bucket" | "accessKeyId" | "pathPrefix" | "publicBaseUrl"> & {
     accessKeySecret?: string;
+};
+
+export type AccountFileStorageUsage = {
+    usedBytes: number;
+    totalBytes: number;
 };
 
 const api = apiClient;
@@ -61,6 +67,11 @@ export function updateUserOSSSetting(input: UserOSSSettingInput) {
 
 export function testUserOSSSetting(input: UserOSSSettingInput) {
     return request<{ ok: boolean }>(api.post("/settings/oss/test", input));
+}
+
+export async function getAccountFileStorageUsage() {
+    const data = await request<{ usage: AccountFileStorageUsage }>(api.get("/resources/storage-usage"));
+    return data.usage;
 }
 
 export function resourceIdFromStorageKey(storageKey?: string) {
@@ -118,10 +129,10 @@ export async function getResourceOSSUrl(storageKey?: string) {
     if (!id) throw new Error("当前媒体尚未上传到后端资源存储");
     try {
         const data = await request<{ url: string }>(api.get(`/resources/${encodeURIComponent(id)}/oss-url`));
-        if (!data.url) throw new Error("后端未返回 OSS 地址");
+        if (!data.url) throw new Error("后端未返回对象存储地址");
         return data.url;
     } catch (error) {
-        if (axios.isAxiosError<BackendEnvelope<unknown>>(error)) throw new Error(error.response?.data.msg || error.message || "获取 OSS 地址失败");
+        if (axios.isAxiosError<BackendEnvelope<unknown>>(error)) throw new Error(error.response?.data.msg || error.message || "获取对象存储地址失败");
         throw error;
     }
 }
@@ -137,7 +148,7 @@ export function resourceFileUrl(id: string) {
 
 function resourceProxyFileUrl(id: string) {
     const base = String(apiBaseURL).replace(/\/+$/, "");
-    return `${base}/resources/${encodeURIComponent(id)}/file`;
+    return `${base}/resources/${encodeURIComponent(id)}/file?proxy=1`;
 }
 
 export async function resolveResourceUrl(storageKey?: string, fallback = "") {

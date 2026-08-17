@@ -9,7 +9,7 @@ import { AdminPageFrame } from "../components/admin-shell";
 import { configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
 
 type StorageMode = "local" | StorageProvider;
-type OSSFormValues = { mode: StorageMode; publicBaseUrl?: string; region?: string; endpoint?: string; bucket?: string; accessKeyId?: string; accessKeySecret?: string; pathPrefix?: string };
+type OSSFormValues = { mode: StorageMode; publicBaseUrl?: string; region?: string; endpoint?: string; cdnBaseUrl?: string; bucket?: string; accessKeyId?: string; accessKeySecret?: string; pathPrefix?: string };
 
 const providerLabels: Record<StorageProvider, string> = {
     aliyun: "阿里云 OSS",
@@ -32,6 +32,13 @@ export default function StorageSettingsPage() {
     const [testing, setTesting] = useState(false);
     const [form] = Form.useForm<OSSFormValues>();
     const mode = Form.useWatch("mode", form) || "local";
+    const cdnBaseUrl = Form.useWatch("cdnBaseUrl", form);
+    const isObjectStorage = mode !== "local";
+    const isTencentCOS = mode === "tencent";
+    const selectedProviderLabel = isTencentCOS ? "腾讯云 COS" : "阿里云 OSS";
+    const accessKeyIdLabel = isTencentCOS ? "SecretId" : "AccessKey ID";
+    const accessKeySecretLabel = isTencentCOS ? "SecretKey" : "AccessKey Secret";
+    const hasCurrentProviderSecret = Boolean(setting && setting.provider === mode && setting.hasAccessKeySecret);
     const userNameById = useMemo(() => new Map(references.users.map((user) => [user.id, user.displayName || user.username])), [references.users]);
     const prevModeRef = useRef<StorageMode>(mode);
     const cloudDraftsRef = useRef<Partial<Record<StorageProvider, Partial<OSSFormValues>>>>({});
@@ -90,24 +97,25 @@ export default function StorageSettingsPage() {
     useEffect(() => {
         void getAdminOSSSetting()
             .then(({ setting: value }) => { setSetting(value); form.setFieldsValue(formValues(value)); })
-            .catch((error) => message.error(error instanceof Error ? error.message : "读取 OSS 配置失败"))
+            .catch((error) => message.error(error instanceof Error ? error.message : "读取对象存储配置失败"))
             .finally(() => setLoading(false));
     }, [form, message]);
 
     const save = async () => {
         await form.validateFields();
+        // 本地模式会卸载对象存储字段，读取完整 store 才能保留已保存的配置。
         const values = form.getFieldsValue(true);
-        const isCloud = values.mode !== "local";
-        if (!isCloud && !values.publicBaseUrl?.trim()) return message.error("请填写服务器访问地址");
-        if (isCloud && !values.bucket?.trim()) return message.error("请填写 Bucket");
-        if (isCloud && !values.endpoint?.trim()) return message.error("请填写 Endpoint");
-        if (isCloud && !values.accessKeyId?.trim()) return message.error("请填写 AccessKey ID");
-        if (isCloud && !values.accessKeySecret?.trim() && !hasSavedSecret) return message.error("请填写 AccessKey Secret");
-        if (isCloud && (values.mode === "tencent" || values.mode === "s3") && !values.region?.trim()) return message.error("请填写 Region");
+        if (values.mode === "local" && !values.publicBaseUrl?.trim()) return message.error("请填写服务器访问地址");
+        if (values.mode !== "local" && !values.accessKeySecret?.trim() && !hasCurrentProviderSecret) return message.error(`请填写${values.mode === "tencent" ? " SecretKey" : " AccessKey Secret"}`);
+        if (values.mode === "aliyun" && !values.endpoint?.trim()) return message.error("请填写阿里云 OSS Endpoint");
+        if (values.mode === "tencent" && !values.endpoint?.trim() && !values.region?.trim()) return message.error("请填写腾讯云 COS Region 或 Endpoint");
+        if (values.mode === "s3" && !values.region?.trim()) return message.error("请填写 Amazon S3 Region");
+        if (values.mode === "s3" && !values.endpoint?.trim()) return message.error("请填写 Amazon S3 Endpoint");
+        if (values.mode !== "local" && !values.bucket?.trim()) return message.error("请填写对象存储 Bucket");
+        if (values.mode !== "local" && !values.accessKeyId?.trim()) return message.error(`请填写${values.mode === "tencent" ? " SecretId" : " AccessKey ID"}`);
         setSaving(true);
         try {
-            const provider = (isCloud ? values.mode : "aliyun") as StorageProvider;
-            const result = await updateAdminOSSSetting({ enabled: isCloud, provider, region: values.region?.trim() || "", endpoint: values.endpoint?.trim() || "", bucket: values.bucket?.trim() || "", accessKeyId: values.accessKeyId?.trim() || "", accessKeySecret: values.accessKeySecret?.trim() || "", publicBaseUrl: values.publicBaseUrl?.trim() || "", pathPrefix: values.pathPrefix?.trim() || "" });
+            const result = await updateAdminOSSSetting({ enabled: values.mode !== "local", provider: values.mode === "local" ? setting?.provider || "aliyun" : values.mode, region: values.region?.trim() || "", endpoint: values.endpoint?.trim() || "", cdnBaseUrl: values.cdnBaseUrl?.trim() || "", bucket: values.bucket?.trim() || "", accessKeyId: values.accessKeyId?.trim() || "", accessKeySecret: values.accessKeySecret?.trim() || "", publicBaseUrl: values.publicBaseUrl?.trim() || "", pathPrefix: values.pathPrefix?.trim() || "" });
             setSetting(result.setting);
             form.setFieldsValue(formValues(result.setting));
             message.success("存储配置已保存");
@@ -128,7 +136,7 @@ export default function StorageSettingsPage() {
                     icon={<Cloud className="size-4" />}
                     title="平台存储"
                     description="选择平台新增媒体资源的默认写入方式。"
-                    status={<Space size={6}><Tag variant="filled" color={setting?.enabled ? "blue" : "default"}>{setting?.enabled ? providerLabels[setting.provider] || "云存储" : "服务器本地"}</Tag>{setting?.enabled ? <Tag variant="filled" color={setting.hasAccessKeySecret ? "success" : "warning"}>{setting.hasAccessKeySecret ? configuredSecretText : "未保存密钥"}</Tag> : null}</Space>}
+                    status={<Space size={6}><Tag variant="filled" color={setting?.enabled ? "blue" : "default"}>{setting?.enabled ? storageProviderLabel(setting.provider) : "服务器本地"}</Tag>{setting?.enabled ? <Tag variant="filled" color={setting.hasAccessKeySecret ? "success" : "warning"}>{setting.hasAccessKeySecret ? configuredSecretText : "未保存密钥"}</Tag> : null}</Space>}
                     footer={<><div className="text-xs text-foreground/45">{setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "尚未保存平台存储配置"}</div><div className="flex items-center gap-2">{mode !== "local" && <Button icon={<Zap className="size-4" />} loading={testing} onClick={() => void test()}>测试连接</Button>}<Button type="primary" loading={saving} onClick={() => void save()}>保存存储配置</Button></div></>}
                 >
                     <Form form={form} layout="vertical" requiredMark={false} disabled={loading}>
@@ -142,18 +150,26 @@ export default function StorageSettingsPage() {
                                         { label: <span className="inline-flex items-center gap-2"><Cloud className="size-4" />腾讯云 COS</span>, value: "tencent" },
                                         { label: <span className="inline-flex items-center gap-2"><Cloud className="size-4" />Amazon S3</span>, value: "s3" },
                                     ]}
+                                    onChange={(value) => {
+                                        const nextMode = value as StorageMode;
+                                        const switchingProvider = nextMode !== "local" && ((mode !== "local" && mode !== nextMode) || (mode === "local" && setting?.provider !== nextMode));
+                                        if (switchingProvider) form.setFieldsValue({ region: "", endpoint: "", cdnBaseUrl: "", bucket: "", accessKeyId: "", accessKeySecret: "" });
+                                    }}
                                 />
                             </Form.Item>
-                            {mode !== "local" ? (
+                            {isObjectStorage ? (
                                 <>
                                     {(() => { const ph = providerPlaceholders[mode as StorageProvider] || providerPlaceholders.aliyun; return (
                                     <>
                                     <Form.Item name="region" label="Region"><Input autoComplete="off" placeholder={ph.region} /></Form.Item>
-                                    <Form.Item name="endpoint" label="Endpoint"><Input autoComplete="off" placeholder={ph.endpoint} /></Form.Item>
+                                    <Form.Item name="endpoint" label="Endpoint" extra={isTencentCOS ? "可留空，系统会根据 Region 生成标准 COS Endpoint。" : undefined}><Input autoComplete="off" placeholder={ph.endpoint} /></Form.Item>
+                                    <Form.Item name="cdnBaseUrl" label="CDN 加速域名" extra={isTencentCOS ? "选填。上传仍走 Endpoint，下载与预览改走 CDN；私有桶需开启 CDN 私有存储桶访问。CDN URL 不附带 COS 签名，未配置 CDN URL 鉴权时链接将长期可访问。" : "选填。上传仍走 Endpoint，下载与预览改走 CDN；阿里云私有 Bucket 需开启 CDN 私有 Bucket 回源。CDN URL 不附带 OSS 签名，未配置 CDN URL 鉴权时链接将长期可访问。"} rules={[{ type: "url", message: "请填写完整的 http/https CDN 加速域名" }]}>
+                                        <Input autoComplete="off" inputMode="url" placeholder="https://media.example.com" />
+                                    </Form.Item>
                                     <Form.Item name="bucket" label="Bucket"><Input autoComplete="off" placeholder="例如：my-canvas-assets" /></Form.Item>
                                     <Form.Item name="pathPrefix" label="路径前缀"><Input autoComplete="off" placeholder="例如：uploads/infinite-canvas" /></Form.Item>
-                                    <Form.Item name="accessKeyId" label="AccessKey ID"><Input autoComplete="off" placeholder={ph.accessKeyId} /></Form.Item>
-                                    <Form.Item name="accessKeySecret" label={hasSavedSecret ? `AccessKey Secret（${configuredSecretText}）` : "AccessKey Secret"}><Input.Password autoComplete="new-password" placeholder={hasSavedSecret ? "留空保留原密钥" : ph.accessKeySecret} /></Form.Item>
+                                    <Form.Item name="accessKeyId" label={accessKeyIdLabel}><Input autoComplete="off" placeholder={ph.accessKeyId} /></Form.Item>
+                                    <Form.Item name="accessKeySecret" label={hasCurrentProviderSecret ? `${accessKeySecretLabel}（${configuredSecretText}）` : accessKeySecretLabel}><Input.Password autoComplete="new-password" placeholder={hasCurrentProviderSecret ? "留空保留原密钥" : ph.accessKeySecret} /></Form.Item>
                                     <Form.Item className="md:col-span-2" name="publicBaseUrl" label="公共访问域名（选填）" tooltip="配置 CDN 或自定义域名后，预签名下载链接将使用此地址，不再拼接 bucket.endpoint。留空则使用 Endpoint 自动构造。"><Input autoComplete="off" placeholder="https://cdn.example.com" /></Form.Item>
                                     </>
                                     ); })()}
@@ -187,12 +203,13 @@ export default function StorageSettingsPage() {
                         </div>
                     </Form>
                 </SettingsSectionCard>
-                <div className="grid border-y border-border text-xs text-foreground/55 sm:grid-cols-3 sm:divide-x sm:divide-border"><Notice icon={mode !== "local" ? <Cloud className="size-3.5" /> : <HardDrive className="size-3.5" />} text={mode !== "local" ? `新资源写入${providerLabels[mode as StorageProvider] || "云存储"}` : "新资源写入服务器数据卷"} /><Notice icon={<ShieldCheck className="size-3.5" />} text="历史资源位置保持不变" /><Notice icon={<KeyRound className="size-3.5" />} text="外部链接仅在签名有效期内可用" /></div>
+                <div className="grid border-y border-border text-xs text-foreground/55 sm:grid-cols-3 sm:divide-x sm:divide-border"><Notice icon={isObjectStorage ? <Cloud className="size-3.5" /> : <HardDrive className="size-3.5" />} text={isObjectStorage ? `新资源写入${storageProviderLabel(mode as AdminOSSSetting["provider"])}` : "新资源写入服务器数据卷"} /><Notice icon={<ShieldCheck className="size-3.5" />} text="历史资源位置保持不变" /><Notice icon={<KeyRound className="size-3.5" />} text={isObjectStorage && cdnBaseUrl?.trim() ? "CDN 链接依赖 CDN 自身访问控制" : "外部链接仅在签名有效期内可用" } /></div>
             </div>
         </AdminPageFrame>
     );
 }
 
-function formValues(setting?: AdminOSSSetting | null): OSSFormValues { return { mode: setting?.enabled ? (setting.provider || "aliyun") : "local", publicBaseUrl: setting?.publicBaseUrl || "", region: setting?.region || "", endpoint: setting?.endpoint || "", bucket: setting?.bucket || "", accessKeyId: setting?.accessKeyId || "", accessKeySecret: "", pathPrefix: setting?.pathPrefix || "" }; }
+function formValues(setting?: AdminOSSSetting | null): OSSFormValues { return { mode: setting?.enabled ? (setting.provider || "aliyun") : "local", publicBaseUrl: setting?.publicBaseUrl || "", region: setting?.region || "", endpoint: setting?.endpoint || "", cdnBaseUrl: setting?.cdnBaseUrl || "", bucket: setting?.bucket || "", accessKeyId: setting?.accessKeyId || "", accessKeySecret: "", pathPrefix: setting?.pathPrefix || "" }; }
+function storageProviderLabel(provider?: AdminOSSSetting["provider"]) { return provider === "tencent" ? "腾讯云 COS" : provider === "s3" ? "Amazon S3" : "阿里云 OSS"; }
 function formatTime(value?: string) { return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "--"; }
 function Notice({ icon, text }: { icon: ReactNode; text: string }) { return <div className="flex items-center gap-2 px-3 py-2.5"><span className="text-foreground/40">{icon}</span><span>{text}</span></div>; }

@@ -8,7 +8,7 @@ import { ModelIcon } from "@/components/model-picker";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { CapabilityCardPicker, ProtocolCardPicker, type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
-import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, modelProtocolLabel, type ModelProtocol } from "@/lib/model-protocols";
+import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, modelProtocolLabel, modelProtocolSupportsTokenBilling, type ModelProtocol } from "@/lib/model-protocols";
 import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, testAdminChannelModel, updateAdminChannelModel, type ChannelModel, type FormulaBillingConfig } from "@/services/api/wallet";
 import type { ModelChannel } from "@/stores/use-config-store";
 import { AdminPageFrame } from "./admin-shell";
@@ -47,6 +47,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const [form] = Form.useForm<FormValues>();
     const billingMode = Form.useWatch("billingMode", form) || "fixed_request";
     const modelCapability = Form.useWatch("capability", form);
+    const modelProtocol = Form.useWatch("protocol", form);
     const modelKey = Form.useWatch("modelKey", form) || "";
     const formulaTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -181,11 +182,13 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 form.setFieldValue("unitPrice", 0);
             }
         }
-        if (!changed.capability) return;
         const currentBillingMode = form.getFieldValue("billingMode") as ChannelModel["billingMode"] | undefined;
-        if ((currentBillingMode === "per_second" && changed.capability !== "video") || (currentBillingMode === "token" && changed.capability !== "text")) {
+        const currentCapability = form.getFieldValue("capability") as EditableCapability | undefined;
+        const currentProtocol = form.getFieldValue("protocol") as ModelProtocol | undefined;
+        if ((currentBillingMode === "per_second" && currentCapability !== "video") || (currentBillingMode === "token" && !modelProtocolSupportsTokenBilling(currentCapability, currentProtocol))) {
             form.setFieldValue("billingMode", "fixed_request");
         }
+        if (!changed.capability) return;
         const current = form.getFieldValue("protocol") as ModelProtocol | undefined;
         if (modelProtocolCapability(current) !== changed.capability) {
             const nextProtocol = MODEL_PROTOCOLS.find((item) => item.capability === changed.capability)?.value;
@@ -275,20 +278,29 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     </Form.Item>
                     {modelCapability === "image" || modelCapability === "video" ? <Form.Item name="capabilityConfig" rules={[{ required: true, message: `请配置${modelCapability === "image" ? "图片" : "视频"}能力参数` }]}><ModelCapabilityEditor capability={modelCapability} model={modelKey} protocol={form.getFieldValue("protocol")} /></Form.Item> : null}
                     <Form.Item name="billingMode" label="计费方式" rules={[{ required: true }]}>
-                        <Segmented block options={[{ label: "按次计费", value: "fixed_request" }, { label: "按秒计费", value: "per_second", disabled: modelCapability !== "video" }, { label: "Token 计费", value: "token", disabled: modelCapability !== "text" }, { label: "公式计费", value: "formula" }]} />
+                        <Segmented block options={[{ label: "按次计费", value: "fixed_request" }, { label: "按秒计费", value: "per_second", disabled: modelCapability !== "video" }, { label: "Token 计费", value: "token", disabled: !modelProtocolSupportsTokenBilling(modelCapability, modelProtocol) }, { label: "公式计费", value: "formula" }]} />
                     </Form.Item>
                     {billingMode === "token" ? (
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                            <Form.Item name="inputTokenPrice" label="输入 / 百万 Token" rules={[{ required: true, message: "请输入输入价格" }]}>
-                                <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
-                            </Form.Item>
-                            <Form.Item name="outputTokenPrice" label="输出 / 百万 Token" rules={[{ required: true, message: "请输入输出价格" }]}>
-                                <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
-                            </Form.Item>
-                            <Form.Item name="cachedTokenPrice" label="缓存 / 百万 Token" rules={[{ required: true, message: "请输入缓存价格" }]}>
-                                <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
-                            </Form.Item>
-                        </div>
+                        modelCapability === "video" ? (
+                            <div>
+                                <Form.Item name="outputTokenPrice" label="视频 / 百万 Token" rules={[{ required: true, message: "请输入视频 Token 价格" }]}>
+                                    <InputNumber style={{ width: "100%" }} min={0.000001} max={1_000_000} precision={6} step={0.1} />
+                                </Form.Item>
+                                <div className="mb-4 text-xs text-foreground/45">仅火山方舟视频协议可用；成功后按任务查询响应的 usage.completion_tokens 结算。</div>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                <Form.Item name="inputTokenPrice" label="输入 / 百万 Token" rules={[{ required: true, message: "请输入输入价格" }]}>
+                                    <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
+                                </Form.Item>
+                                <Form.Item name="outputTokenPrice" label="输出 / 百万 Token" rules={[{ required: true, message: "请输入输出价格" }]}>
+                                    <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
+                                </Form.Item>
+                                <Form.Item name="cachedTokenPrice" label="缓存 / 百万 Token" rules={[{ required: true, message: "请输入缓存价格" }]}>
+                                    <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
+                                </Form.Item>
+                            </div>
+                        )
                     ) : billingMode === "formula" ? (
                         <div className="space-y-2">
                             <div className="text-xs text-foreground/50">点击下方常量可插入到公式中</div>
@@ -351,9 +363,7 @@ function billingSummary(item: ChannelModel) {
     }
     return (
         <div className="text-xs leading-5">
-            <div>输入 {formatCredits(item.inputTokenPriceMicrocredits)} / 百万</div>
-            <div>输出 {formatCredits(item.outputTokenPriceMicrocredits)} / 百万</div>
-            <div>缓存 {formatCredits(item.cachedTokenPriceMicrocredits)} / 百万</div>
+            {item.capability === "video" ? <div>视频 {formatCredits(item.outputTokenPriceMicrocredits)} / 百万</div> : <><div>输入 {formatCredits(item.inputTokenPriceMicrocredits)} / 百万</div><div>输出 {formatCredits(item.outputTokenPriceMicrocredits)} / 百万</div><div>缓存 {formatCredits(item.cachedTokenPriceMicrocredits)} / 百万</div></>}
         </div>
     );
 }
