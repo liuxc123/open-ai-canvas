@@ -369,7 +369,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     body: { minHeight: 0, height: "100%", padding: 0 },
                 }}
             >
-                <div className="flex h-full min-h-0 flex-col gap-2.5 p-3" style={{ color: theme.node.text }}>
+                <div className="flex min-h-0 flex-col gap-2.5 p-3" style={{ color: theme.node.text }}>
                     <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
                     {renderPromptEditor(true)}
                     {mode === "video" && !simpleMode ? (

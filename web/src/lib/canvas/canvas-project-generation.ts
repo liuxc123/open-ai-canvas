@@ -82,6 +82,12 @@ export function limitCanvasImageReferences(config: AiConfig, referenceImages: Re
     return referenceImages.slice(0, maxImages);
 }
 
+export function canvasImageReferenceLimitError(config: AiConfig, referenceImages: ReferenceImage[]) {
+    const maxImages = modelCapabilityConfigFor(config, config.model).image?.references.maxImages;
+    if (maxImages === undefined || referenceImages.length <= maxImages) return "";
+    return `当前图片模型最多支持 ${maxImages} 张参考图，当前已连接 ${referenceImages.length} 张。请移除多余连线后重试`;
+}
+
 export { backendProviderConfig };
 
 const generationOperationLocks = new Map<string, Promise<unknown>>();

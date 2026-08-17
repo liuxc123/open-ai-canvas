@@ -45,6 +45,7 @@ type CreationMessage = {
     role: "user" | "assistant";
     mode?: CreationMode;
     content: string;
+    reasoning?: string;
     createdAt: string;
     status?: CreationStatus;
     model?: string;
@@ -1158,7 +1159,8 @@ function GenerationSettingsMenu(props: ComposerProps) {
         ...(props.imageProfile.quality.supported ? [qualityLabel] : []),
         ...(props.imageProfile.maxOutputs > 1 ? [props.count] : []),
     ].join(" · ");
-    const summary = props.mode === "video" ? `${props.ratio} · ${videoResolutionLabel(props.videoQuality)}` : imageSummary;
+    const videoResolutionSupported = props.mode === "video" && resolutions.length > 0;
+    const summary = props.mode === "video" ? [props.ratio, ...(videoResolutionSupported ? [videoResolutionLabel(props.videoQuality)] : [])].join(" · ") : imageSummary;
     const panel = <div className="creation-parameter-menu">
         {props.mode === "video" || props.imageProfile.size.parameter !== "none" ? <SettingSection title="画幅" value={props.mode === "image" && usesImageResolutionPicker ? activeImageRatio : props.ratio}><div className="creation-parameter-content"><div className="creation-choice-grid is-ratio">{ratios.map((value) => { const selected = props.mode === "image" && usesImageResolutionPicker ? value === activeImageRatio : value === props.ratio; return <button key={value} type="button" aria-pressed={selected} className={selected ? "is-selected" : ""} onClick={() => { if (props.mode === "image") selectImageRatio(value); else props.setRatio(value); setCustomRatioOpen(false); }}><span className="creation-ratio-preview"><span style={ratioPreviewStyle(value)} /></span><span>{value}</span></button>; })}</div>{props.mode !== "video" && props.imageProfile.size.allowCustom && (customRatioOpen ? <label className="creation-custom-value"><span>宽 x 高</span><input value={props.ratio} onFocus={(event) => event.currentTarget.select()} onChange={(event) => props.setRatio(event.target.value)} placeholder="1920x1080 或 2:1" aria-label="自定义图片尺寸或比例" /></label> : <button type="button" className="creation-custom-trigger" onClick={() => setCustomRatioOpen(true)}><Plus />输入自定义尺寸</button>)}</div></SettingSection> : null}
         {props.mode === "video" ? <SettingSection title="清晰度" value={videoResolutionLabel(props.videoQuality)}><div className="creation-choice-grid is-resolution">{resolutions.map((option) => <button key={option.value} type="button" aria-pressed={option.value === props.videoQuality} className={option.value === props.videoQuality ? "is-selected" : ""} onClick={() => props.setVideoQuality(option.value)}>{option.label}</button>)}</div></SettingSection> : <>

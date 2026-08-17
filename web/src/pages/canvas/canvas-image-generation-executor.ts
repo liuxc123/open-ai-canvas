@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canGenerateImageInPlace, findAvailableGenerationGroupPosition, imageGenerationChildPosition, imageGenerationGroupSize } from "@/lib/canvas/canvas-generation-layout";
 import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
-import { buildImageGenerationMetadata, getGenerationCount, isGenerationCanceled, limitCanvasImageReferences, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
+import { canvasImageReferenceLimitError, buildImageGenerationMetadata, getGenerationCount, isGenerationCanceled, limitCanvasImageReferences, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { CONTENT_MODERATION_ERROR_CODE, generationFailureMetadata, type GenerationFailureMetadata } from "@/lib/generation-error";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
@@ -39,6 +39,11 @@ export async function executeImageGeneration({
     showError,
     registerPendingNodeIds,
 }: CanvasGenerationExecution) {
+    const referenceLimitError = canvasImageReferenceLimitError(generationConfig, generationContext.referenceImages);
+    if (referenceLimitError) {
+        showError(referenceLimitError);
+        return;
+    }
     const count = getGenerationCount(generationConfig.count);
     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
