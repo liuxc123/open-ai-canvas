@@ -383,7 +383,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "dots"
                 "--canvas-grid-size": `${48 * viewport.k}px`,
                 "--canvas-grid-x": `${viewport.x % (48 * viewport.k)}px`,
                 "--canvas-grid-y": `${viewport.y % (48 * viewport.k)}px`,
-                "--canvas-dot-size": viewport.k < 0.12 ? "0.8px" : "1.15px",
+                "--canvas-dot-size": viewport.k < 0.12 ? "1px" : "1.5px",
             } as React.CSSProperties}
             onPointerDown={handlePointerDown}
             onDoubleClick={(event) => {
@@ -427,7 +427,7 @@ function CanvasGrid({ mode }: { mode: CanvasBackgroundMode }) {
                 backgroundImage,
                 backgroundSize: "var(--canvas-grid-size) var(--canvas-grid-size)",
                 transform: "translate3d(var(--canvas-grid-x), var(--canvas-grid-y), 0)",
-                opacity: mode === "dots" ? 0.28 : 0.2,
+                opacity: mode === "dots" ? 0.6 : 0.5,
                 willChange: "transform",
             }}
         />
