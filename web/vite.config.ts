@@ -15,6 +15,15 @@ export default defineConfig({
         __APP_VERSION__: JSON.stringify(appVersion),
         __APP_CHANGELOG__: JSON.stringify(appChangelog),
     },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks(id) {
+                    if (id.includes("leafer-ui") || id.includes("@leafer/")) return "leafer-ui";
+                },
+            },
+        },
+    },
     server: {
         proxy: {
             "/api": {
