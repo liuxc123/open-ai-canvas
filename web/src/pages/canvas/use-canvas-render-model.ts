@@ -6,6 +6,7 @@ import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
 import { shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
 import { buildSkillMentionReferences } from "@/lib/canvas/canvas-skill-mentions";
+import { quantizeViewportForCulling } from "@/lib/canvas/canvas-viewport-quantize";
 import type { Skill } from "@/services/api/skills";
 import type { Asset, ImageAsset } from "@/stores/use-asset-store";
 import type { DirectorScene } from "@/types/director";
@@ -110,11 +111,14 @@ export function useCanvasRenderModel({
         return { left, top, width: Math.max(2, right - left), height: Math.max(2, bottom - top) };
     }, [nodes]);
     const visibleNodes = useMemo(() => {
-        const padding = (reduceMediaEffects ? Math.max(240, Math.max(viewportSize.width, viewportSize.height) * 0.4) : Math.max(800, Math.max(viewportSize.width, viewportSize.height) * 1.5)) / viewport.k;
-        const viewLeft = -viewport.x / viewport.k - padding;
-        const viewTop = -viewport.y / viewport.k - padding;
-        const viewRight = viewLeft + viewportSize.width / viewport.k + padding * 2;
-        const viewBottom = viewTop + viewportSize.height / viewport.k + padding * 2;
+        // 视口按粗网格量化后再参与裁剪：平移/缩放进行中只有跨过网格边界才重算可见集，
+        // 量化误差（平移 ≤192px、缩放恒向"范围更大"方向取整）被下面的 padding 吸收，不会误裁可见节点。
+        const cullViewport = quantizeViewportForCulling(viewport);
+        const padding = (reduceMediaEffects ? Math.max(240, Math.max(viewportSize.width, viewportSize.height) * 0.4) : Math.max(800, Math.max(viewportSize.width, viewportSize.height) * 1.5)) / cullViewport.k;
+        const viewLeft = -cullViewport.x / cullViewport.k - padding;
+        const viewTop = -cullViewport.y / cullViewport.k - padding;
+        const viewRight = viewLeft + viewportSize.width / cullViewport.k + padding * 2;
+        const viewBottom = viewTop + viewportSize.height / cullViewport.k + padding * 2;
         const frames: CanvasNodeData[] = [];
         const regular: CanvasNodeData[] = [];
         nodes.forEach((node) => {
@@ -125,7 +129,10 @@ export function useCanvasRenderModel({
     }, [nodes, reduceMediaEffects, renderHiddenNodeIds, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
 
     const imageAssets = useMemo(() => assets.filter((asset): asset is ImageAsset => asset.kind === "image"), [assets]);
-    const canvasImageNodes = useMemo(() => nodes.filter((node) => node.type === CanvasNodeType.Image && Boolean(node.metadata?.content) && !collapsedBatchChildIds.has(node.id) && !(node.parentId && nodeById.get(node.parentId)?.metadata?.frame?.collapsed)), [collapsedBatchChildIds, nodeById, nodes]);
+    const canvasImageNodes = useMemo(
+        () => nodes.filter((node) => node.type === CanvasNodeType.Image && Boolean(node.metadata?.content) && !collapsedBatchChildIds.has(node.id) && !(node.parentId && nodeById.get(node.parentId)?.metadata?.frame?.collapsed)),
+        [collapsedBatchChildIds, nodeById, nodes],
+    );
     const semanticNodesRef = useRef(nodes);
     const semanticNodes = useMemo(() => {
         const previous = semanticNodesRef.current;
@@ -164,13 +171,17 @@ export function useCanvasRenderModel({
         const bottom = Math.max(...selectedNodes.map((node) => node.position.y + node.height));
         return { left, top, width: right - left, height: bottom - top, count: selectedNodes.length };
     }, [nodes, renderHiddenNodeIds, selectedNodeIds]);
-    const selectedVideoNodes = useMemo(() => nodes
-        .filter((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Video && Boolean(node.metadata?.content) && !renderHiddenNodeIds.has(node.id))
-        .sort((a, b) => {
-            const shotA = a.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
-            const shotB = b.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
-            return shotA - shotB || a.position.y - b.position.y || a.position.x - b.position.x;
-        }), [nodes, renderHiddenNodeIds, selectedNodeIds]);
+    const selectedVideoNodes = useMemo(
+        () =>
+            nodes
+                .filter((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Video && Boolean(node.metadata?.content) && !renderHiddenNodeIds.has(node.id))
+                .sort((a, b) => {
+                    const shotA = a.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
+                    const shotB = b.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
+                    return shotA - shotB || a.position.y - b.position.y || a.position.x - b.position.x;
+                }),
+        [nodes, renderHiddenNodeIds, selectedNodeIds],
+    );
     const batchChildCountById = useMemo(() => {
         const map = new Map<string, number>();
         nodes.forEach((node) => {
@@ -216,20 +227,24 @@ export function useCanvasRenderModel({
         });
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections]);
-    const displayConnections = useMemo(() => connections.flatMap((connection) => {
-        if (collapsedBatchChildIds.has(connection.fromNodeId) || collapsedBatchChildIds.has(connection.toNodeId)) return [];
-        const fromNode = nodeById.get(connection.fromNodeId);
-        const toNode = nodeById.get(connection.toNodeId);
-        if (!fromNode || !toNode) return [];
-        const fromParent = fromNode.parentId ? nodeById.get(fromNode.parentId) : null;
-        const toParent = toNode.parentId ? nodeById.get(toNode.parentId) : null;
-        const displayFrom = fromParent && isFrameNode(fromParent) && fromParent.metadata?.frame?.collapsed ? fromParent : fromNode;
-        const displayTo = toParent && isFrameNode(toParent) && toParent.metadata?.frame?.collapsed ? toParent : toNode;
-        if (displayFrom.id === displayTo.id) return [];
-        const from = dragPreview?.nodeIds.has(displayFrom.id) ? { ...displayFrom, position: { x: displayFrom.position.x + dragPreview.x, y: displayFrom.position.y + dragPreview.y } } : displayFrom;
-        const to = dragPreview?.nodeIds.has(displayTo.id) ? { ...displayTo, position: { x: displayTo.position.x + dragPreview.x, y: displayTo.position.y + dragPreview.y } } : displayTo;
-        return [{ connection, from, to }];
-    }), [collapsedBatchChildIds, connections, dragPreview, nodeById]);
+    const displayConnections = useMemo(
+        () =>
+            connections.flatMap((connection) => {
+                if (collapsedBatchChildIds.has(connection.fromNodeId) || collapsedBatchChildIds.has(connection.toNodeId)) return [];
+                const fromNode = nodeById.get(connection.fromNodeId);
+                const toNode = nodeById.get(connection.toNodeId);
+                if (!fromNode || !toNode) return [];
+                const fromParent = fromNode.parentId ? nodeById.get(fromNode.parentId) : null;
+                const toParent = toNode.parentId ? nodeById.get(toNode.parentId) : null;
+                const displayFrom = fromParent && isFrameNode(fromParent) && fromParent.metadata?.frame?.collapsed ? fromParent : fromNode;
+                const displayTo = toParent && isFrameNode(toParent) && toParent.metadata?.frame?.collapsed ? toParent : toNode;
+                if (displayFrom.id === displayTo.id) return [];
+                const from = dragPreview?.nodeIds.has(displayFrom.id) ? { ...displayFrom, position: { x: displayFrom.position.x + dragPreview.x, y: displayFrom.position.y + dragPreview.y } } : displayFrom;
+                const to = dragPreview?.nodeIds.has(displayTo.id) ? { ...displayTo, position: { x: displayTo.position.x + dragPreview.x, y: displayTo.position.y + dragPreview.y } } : displayTo;
+                return [{ connection, from, to }];
+            }),
+        [collapsedBatchChildIds, connections, dragPreview, nodeById],
+    );
 
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();

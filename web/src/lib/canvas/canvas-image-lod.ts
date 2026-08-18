@@ -44,3 +44,32 @@ export function shouldGenerateImageThumb(mimeType: string | undefined, width: nu
     if (longEdge > 0 && longEdge <= IMAGE_THUMB_GENERATE_MIN_SOURCE_EDGE) return false;
     return true;
 }
+
+/** micro 档长边（WebP/JPEG 编码后的目标长边）：总览缩放下大量图片同屏时的超低分辨率档。 */
+export const IMAGE_MICRO_LONG_EDGE = 192;
+
+/** micro -> 缩略图 的升档阈值（屏幕像素）。 */
+export const IMAGE_MICRO_THUMB_UPGRADE_PX = IMAGE_MICRO_LONG_EDGE;
+
+/** 缩略图 -> micro 的降档阈值（屏幕像素），与升档阈值之间形成迟滞区间。 */
+export const IMAGE_MICRO_THUMB_DOWNGRADE_PX = 120;
+
+/** 图片节点的三档细节级别：micro（超低分辨率总览） -> thumb（768 缩略图） -> full（原图）。 */
+export type ImageDetailTier = "micro" | "thumb" | "full";
+
+/**
+ * 三档迟滞切档判定（相邻档位之间独立迟滞，中间不会跳档）：
+ * - full：降到 IMAGE_THUMB_FULL_DOWNGRADE_PX 及以下回 thumb；
+ * - thumb：超过 IMAGE_THUMB_FULL_UPGRADE_PX 升 full，降到 IMAGE_MICRO_THUMB_DOWNGRADE_PX 及以下回 micro；
+ * - micro：超过 IMAGE_MICRO_THUMB_UPGRADE_PX 升 thumb。
+ * @param displayLongEdgePx imageNodeDisplayLongEdge 的计算结果
+ * @param current 当前档位
+ */
+export function imageNodeDetailTier(displayLongEdgePx: number, current: ImageDetailTier): ImageDetailTier {
+    if (current === "full") return displayLongEdgePx > IMAGE_THUMB_FULL_DOWNGRADE_PX ? "full" : "thumb";
+    if (current === "thumb") {
+        if (displayLongEdgePx > IMAGE_THUMB_FULL_UPGRADE_PX) return "full";
+        return displayLongEdgePx <= IMAGE_MICRO_THUMB_DOWNGRADE_PX ? "micro" : "thumb";
+    }
+    return displayLongEdgePx > IMAGE_MICRO_THUMB_UPGRADE_PX ? "thumb" : "micro";
+}

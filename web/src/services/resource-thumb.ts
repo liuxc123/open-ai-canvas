@@ -1,6 +1,6 @@
 import localforage from "localforage";
 
-import { IMAGE_THUMB_LONG_EDGE, shouldGenerateImageThumb } from "@/lib/canvas/canvas-image-lod";
+import { IMAGE_MICRO_LONG_EDGE, IMAGE_THUMB_LONG_EDGE, shouldGenerateImageThumb } from "@/lib/canvas/canvas-image-lod";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { peekCachedResourceBlob } from "@/services/resource-blob-cache";
@@ -22,9 +22,12 @@ type GenerationJob = {
 const MAX_THUMB_CACHE_BYTES = 200 * 1024 * 1024;
 const MAX_CONCURRENT_GENERATIONS = 2;
 const TOUCH_INTERVAL_MS = 10 * 60 * 1000;
+/** 常驻内存的缩略图 object URL 上限：超出后按 LRU 逐出未被持有的 URL（revoke 释放 blob），避免大画布内存无限增长。 */
+const MAX_THUMB_URLS = 512;
 
 const thumbStore = localforage.createInstance({ name: "infinite-canvas", storeName: "resource_thumbs" });
 const thumbUrls = new Map<string, string>();
+const thumbUrlLeases = new Map<string, number>();
 const runningKeys = new Set<string>();
 const queue: GenerationJob[] = [];
 let activeGenerations = 0;
@@ -33,26 +36,29 @@ export function canvasImageThumbSupported(): boolean {
     return typeof OffscreenCanvas !== "undefined" && typeof createImageBitmap === "function";
 }
 
-function thumbKey(userScope: string, resourceId: string) {
-    return `${userScope}:${resourceId}:t${IMAGE_THUMB_LONG_EDGE}`;
+function thumbKey(userScope: string, resourceId: string, longEdge: number) {
+    return `${userScope}:${resourceId}:t${longEdge}`;
 }
 
 /**
  * 获取某个画布图片素材的低分辨率 object URL。
+ * @param options.longEdge 目标长边档位（768 缩略图 / 192 micro 档），默认 768。
  * - 命中内存 / IDB 缓存时同步返回（毫秒级）；
  * - 未生成过且原图已缓存时，入队后台生成，本次返回 ""（调用方回退原图）；
  * - 原图未缓存或环境不支持时返回 ""。
  */
-export async function getImageThumbObjectUrl(storageKey: string, options?: { priority?: number }): Promise<string> {
+export async function getImageThumbObjectUrl(storageKey: string, options?: { priority?: number; longEdge?: number }): Promise<string> {
     if (!canvasImageThumbSupported()) return "";
     const resourceId = resourceIdFromStorageKey(storageKey);
     if (!resourceId) return "";
     const userScope = getActiveUserScope();
     if (!userScope) return "";
-    const key = thumbKey(userScope, resourceId);
+    const longEdge = options?.longEdge === IMAGE_MICRO_LONG_EDGE ? IMAGE_MICRO_LONG_EDGE : IMAGE_THUMB_LONG_EDGE;
+    const key = thumbKey(userScope, resourceId, longEdge);
 
     const memoUrl = thumbUrls.get(key);
     if (memoUrl) {
+        refreshThumbUrlRecency(key, memoUrl);
         scheduleTouchThumb(key);
         return memoUrl;
     }
@@ -67,7 +73,7 @@ export async function getImageThumbObjectUrl(storageKey: string, options?: { pri
             if (sourceVersion) return url;
         }
     }
-    if (source && sourceVersion) enqueueGeneration(key, source, sourceVersion, options?.priority ?? 1);
+    if (source && sourceVersion) enqueueGeneration(key, source, sourceVersion, options?.priority ?? 1, longEdge);
     return url;
 }
 
@@ -77,10 +83,11 @@ export async function clearImageThumbCache(): Promise<void> {
     runningKeys.clear();
     thumbUrls.forEach((url) => URL.revokeObjectURL(url));
     thumbUrls.clear();
+    thumbUrlLeases.clear();
     await thumbStore.clear().catch(() => undefined);
 }
 
-function enqueueGeneration(key: string, source: Blob, sourceVersion: string, priority: number) {
+function enqueueGeneration(key: string, source: Blob, sourceVersion: string, priority: number, longEdge: number) {
     if (runningKeys.has(key)) return;
     const existing = queue.find((job) => job.key === key);
     if (existing) {
@@ -96,7 +103,7 @@ function enqueueGeneration(key: string, source: Blob, sourceVersion: string, pri
         key,
         priority,
         run: async () => {
-            const thumbBlob = await encodeImageThumb(source).catch(() => null);
+            const thumbBlob = await encodeImageThumb(source, longEdge).catch(() => null);
             if (!thumbBlob) return;
             const record: ThumbRecord = {
                 sourceVersion,
@@ -131,14 +138,14 @@ function pumpQueue() {
     }
 }
 
-async function encodeImageThumb(source: Blob): Promise<Blob | null> {
+async function encodeImageThumb(source: Blob, longEdge: number): Promise<Blob | null> {
     if (!shouldGenerateImageThumb(source.type, 0, 0)) return null;
     const bitmap = await createImageBitmap(source).catch(() => null);
     if (!bitmap) return null;
     try {
         // 解码后用真实尺寸再判定一次（小图 / 异常数据直接放弃）。
         if (!shouldGenerateImageThumb(source.type, bitmap.width, bitmap.height)) return null;
-        const ratio = IMAGE_THUMB_LONG_EDGE / Math.max(bitmap.width, bitmap.height);
+        const ratio = longEdge / Math.max(bitmap.width, bitmap.height);
         const width = Math.max(1, Math.round(bitmap.width * ratio));
         const height = Math.max(1, Math.round(bitmap.height * ratio));
         const canvas = new OffscreenCanvas(width, height);
@@ -169,10 +176,52 @@ function ensureThumbUrl(key: string, blob: Blob): string {
     if (existing) {
         URL.revokeObjectURL(existing);
         thumbUrls.delete(key);
+        thumbUrlLeases.delete(existing);
     }
     const url = URL.createObjectURL(blob);
     thumbUrls.set(key, url);
+    pruneThumbUrls();
     return url;
+}
+
+/** 命中内存缓存时刷新 LRU 顺序（Map 插入序即最近使用序）。 */
+function refreshThumbUrlRecency(key: string, url: string) {
+    if (thumbUrls.get(key) !== url) return;
+    thumbUrls.delete(key);
+    thumbUrls.set(key, url);
+}
+
+/**
+ * 声明某个缩略图 URL 正被展示（如画布节点 <img> 挂载中）。被持有的 URL 不会被 LRU 逐出，
+ * 避免 revoke 掉正在显示的地址。与 releaseImageThumbUrl 成对调用。
+ */
+export function retainImageThumbUrl(url: string) {
+    if (!url) return;
+    thumbUrlLeases.set(url, (thumbUrlLeases.get(url) || 0) + 1);
+}
+
+/** 释放缩略图 URL 的持有（节点卸载 / 切换到其他地址时调用）。 */
+export function releaseImageThumbUrl(url: string) {
+    if (!url) return;
+    const count = thumbUrlLeases.get(url);
+    if (!count) return;
+    if (count <= 1) thumbUrlLeases.delete(url);
+    else thumbUrlLeases.set(url, count - 1);
+    pruneThumbUrls();
+}
+
+/**
+ * LRU 逐出：object URL 数量超过上限时，从最久未使用的开始 revoke（释放 blob 内存）。
+ * 正被持有（retained）的 URL 跳过；全部被持有时放弃本轮逐出，等待下次释放。
+ */
+function pruneThumbUrls() {
+    if (thumbUrls.size <= MAX_THUMB_URLS) return;
+    for (const [key, url] of thumbUrls) {
+        if (thumbUrls.size <= MAX_THUMB_URLS) break;
+        if (thumbUrlLeases.has(url)) continue;
+        URL.revokeObjectURL(url);
+        thumbUrls.delete(key);
+    }
 }
 
 async function touchThumb(key: string) {

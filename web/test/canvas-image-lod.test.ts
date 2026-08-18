@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
-import { IMAGE_THUMB_FULL_DOWNGRADE_PX, IMAGE_THUMB_FULL_UPGRADE_PX, IMAGE_THUMB_LONG_EDGE, imageNodeDisplayLongEdge, imageNodeWantsFullResolution, shouldGenerateImageThumb } from "@/lib/canvas/canvas-image-lod";
+import {
+    IMAGE_MICRO_LONG_EDGE,
+    IMAGE_MICRO_THUMB_DOWNGRADE_PX,
+    IMAGE_MICRO_THUMB_UPGRADE_PX,
+    IMAGE_THUMB_FULL_DOWNGRADE_PX,
+    IMAGE_THUMB_FULL_UPGRADE_PX,
+    IMAGE_THUMB_LONG_EDGE,
+    imageNodeDetailTier,
+    imageNodeDisplayLongEdge,
+    imageNodeWantsFullResolution,
+    shouldGenerateImageThumb,
+    type ImageDetailTier,
+} from "@/lib/canvas/canvas-image-lod";
 
 describe("imageNodeDisplayLongEdge", () => {
     test("object-contain 下取节点盒子短边并乘缩放与 DPR", () => {
@@ -65,5 +77,50 @@ describe("档位常量", () => {
     test("升档阈值等于缩略图长边档位，降档阈值低于升档阈值", () => {
         expect(IMAGE_THUMB_FULL_UPGRADE_PX).toBe(IMAGE_THUMB_LONG_EDGE);
         expect(IMAGE_THUMB_FULL_DOWNGRADE_PX).toBeLessThan(IMAGE_THUMB_FULL_UPGRADE_PX);
+    });
+});
+
+describe("imageNodeDetailTier 三档迟滞切档", () => {
+    test("micro 档：超过 micro 升档阈值才升缩略图", () => {
+        expect(imageNodeDetailTier(IMAGE_MICRO_THUMB_UPGRADE_PX, "micro")).toBe("micro");
+        expect(imageNodeDetailTier(IMAGE_MICRO_THUMB_UPGRADE_PX + 1, "micro")).toBe("thumb");
+    });
+
+    test("thumb 档：降到 micro 降档阈值才回 micro", () => {
+        expect(imageNodeDetailTier(IMAGE_MICRO_THUMB_DOWNGRADE_PX + 1, "thumb")).toBe("thumb");
+        expect(imageNodeDetailTier(IMAGE_MICRO_THUMB_DOWNGRADE_PX, "thumb")).toBe("micro");
+    });
+
+    test("thumb 档：超过原图升档阈值升 full，与旧两档逻辑一致", () => {
+        expect(imageNodeDetailTier(IMAGE_THUMB_FULL_UPGRADE_PX + 1, "thumb")).toBe("full");
+        expect(imageNodeDetailTier(IMAGE_THUMB_FULL_UPGRADE_PX, "thumb")).toBe("thumb");
+    });
+
+    test("full 档：降到降档阈值回 thumb", () => {
+        expect(imageNodeDetailTier(IMAGE_THUMB_FULL_DOWNGRADE_PX + 1, "full")).toBe("full");
+        expect(imageNodeDetailTier(IMAGE_THUMB_FULL_DOWNGRADE_PX, "full")).toBe("thumb");
+    });
+
+    test("相邻档位间迟滞区间内保持当前档不抖动", () => {
+        const microMid = (IMAGE_MICRO_THUMB_UPGRADE_PX + IMAGE_MICRO_THUMB_DOWNGRADE_PX) / 2;
+        expect(imageNodeDetailTier(microMid, "micro")).toBe("micro");
+        expect(imageNodeDetailTier(microMid, "thumb")).toBe("thumb");
+        const fullMid = (IMAGE_THUMB_FULL_UPGRADE_PX + IMAGE_THUMB_FULL_DOWNGRADE_PX) / 2;
+        expect(imageNodeDetailTier(fullMid, "full")).toBe("full");
+        expect(imageNodeDetailTier(fullMid, "thumb")).toBe("thumb");
+    });
+
+    test("micro 档常量小于缩略图档位", () => {
+        expect(IMAGE_MICRO_LONG_EDGE).toBeLessThan(IMAGE_THUMB_LONG_EDGE);
+    });
+
+    test("全档位扫描：任何当前档位与分辨率组合都返回合法档位", () => {
+        const tiers: ImageDetailTier[] = ["micro", "thumb", "full"];
+        for (const current of tiers) {
+            for (let px = 0; px <= 2000; px += 37) {
+                const next = imageNodeDetailTier(px, current);
+                expect(tiers).toContain(next);
+            }
+        }
     });
 });

@@ -13,6 +13,7 @@ import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } from "@/lib/canvas/canvas-performance-mode";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
+import { quantizeViewportScale } from "@/lib/canvas/canvas-viewport-quantize";
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
 import { shouldAutoConnectCanvasRuntime } from "@/lib/canvas/local-runtime-connection";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -1412,6 +1413,8 @@ function InfiniteCanvasPage() {
         [configInputsById, confirmStopGeneration, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, mentionReferencesByNodeId, runningNodeId, skillMentionReferences, workspaceMode],
     );
 
+    // 量化后的节点 scale：缩放进行中档内（≈3%）变化不再逐帧下传，避免所有可见节点 React.memo 失效。
+    const nodeScale = quantizeViewportScale(viewport.k);
     const renderCanvasNodeContent = useCallback(
         (contentNode: CanvasNodeData) => {
             if (contentNode.metadata?.workflowKind === "character" && contentNode.metadata.characterAssetId) {
@@ -1430,7 +1433,7 @@ function InfiniteCanvasPage() {
                         node={contentNode}
                         batch={visibleGenerationBatch(contentNode)}
                         pipeline={pipeline}
-                        scale={viewport.k}
+                        scale={nodeScale}
                         mentionReferences={mentionReferencesByNodeId.get(contentNode.id) || EMPTY_RESOURCE_REFERENCES}
                         onOpen={() => setScriptEditorNodeId(contentNode.id)}
                         onCreateImageNodes={() => createScriptImageNodes(contentNode.id)}
@@ -1519,7 +1522,7 @@ function InfiniteCanvasPage() {
             runningNodeId,
             stopRemainingBatchItems,
             updateScriptRow,
-            viewport.k,
+            nodeScale,
             workspaceMode,
         ],
     );
@@ -1731,7 +1734,7 @@ function InfiniteCanvasPage() {
                             >
                                 <CanvasProjectWorldLayers
                                     projectId={projectId}
-                                    viewportScale={viewport.k}
+                                    viewportScale={nodeScale}
                                     connectionLayerBounds={connectionLayerBounds}
                                     displayConnections={displayConnections}
                                     selectedConnectionId={selectedConnectionId}

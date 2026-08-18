@@ -6,14 +6,14 @@ import { CONTENT_MODERATION_ERROR_CODE, generationErrorMessage, isContentModerat
 import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel, isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
-import { imageNodeDisplayLongEdge, imageNodeWantsFullResolution } from "@/lib/canvas/canvas-image-lod";
+import { IMAGE_MICRO_LONG_EDGE, IMAGE_THUMB_LONG_EDGE, imageNodeDetailTier, imageNodeDisplayLongEdge, type ImageDetailTier } from "@/lib/canvas/canvas-image-lod";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import type { GenerationTask } from "@/services/api/task-center";
 import { cacheResourceObjectUrl, getCachedResourceObjectUrl } from "@/services/resource-blob-cache";
-import { getImageThumbObjectUrl } from "@/services/resource-thumb";
+import { getImageThumbObjectUrl, releaseImageThumbUrl, retainImageThumbUrl } from "@/services/resource-thumb";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { createDefaultSubtitleStyle } from "@/types/timeline";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
@@ -593,9 +593,10 @@ function ImageContent({
 
 /**
  * 图片节点专用的资源地址解析：在原有"靠近视口才加载"的基础上叠加
- * 1) LOD（远看用低分辨率档，按屏幕需求分辨率 + 迟滞切换原图）；
+ * 1) LOD（远看用低分辨率档，按屏幕需求分辨率 + 迟滞在 micro / 缩略图 / 原图三档间切换）；
  * 2) 滚出视口后卸载图片（src 置空释放解码位图 / GPU 纹理，blob 缓存不动，滚回来毫秒级恢复）；
- * 3) 性能模式（reduceMediaEffects）下强制使用低分辨率档。
+ * 3) 性能模式（reduceMediaEffects）下强制使用低分辨率档；
+ * 4) 缩略图 URL 通过 retain/release 声明持有，配合服务层 LRU 逐出，避免正在显示的地址被 revoke。
  */
 function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean; scale: number; preferThumb: boolean }) {
     const storageKey = node.metadata?.storageKey || "";
@@ -604,18 +605,33 @@ function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean;
     const { near, scale, preferThumb } = options;
     const [url, setUrl] = useState(isRemoteResource ? "" : fallback);
     const [loading, setLoading] = useState(isRemoteResource);
-    const [fullResolution, setFullResolution] = useState(false);
+    const [detailTier, setDetailTier] = useState<ImageDetailTier>("thumb");
+    const retainedUrlRef = useRef<string>("");
 
     const displayLongEdge = imageNodeDisplayLongEdge(node.width, node.height, scale, typeof window === "undefined" ? 1 : window.devicePixelRatio);
     useEffect(() => {
-        // 性能模式下强制低分辨率档；否则按迟滞阈值在低分辨率与原图间切换。
+        // 性能模式下强制低分辨率档；否则按迟滞阈值在 micro / 缩略图 / 原图间切换。
         if (preferThumb) {
-            setFullResolution(false);
+            setDetailTier((previous) => (previous === "full" ? "thumb" : previous));
             return;
         }
-        setFullResolution((previous) => imageNodeWantsFullResolution(displayLongEdge, previous));
+        setDetailTier((previous) => imageNodeDetailTier(displayLongEdge, previous));
     }, [displayLongEdge, preferThumb]);
-    const wantFull = !preferThumb && fullResolution;
+    const tier = preferThumb && detailTier === "full" ? "thumb" : detailTier;
+
+    const adoptThumbUrl = useCallback((thumbUrl: string) => {
+        if (retainedUrlRef.current === thumbUrl) return;
+        if (retainedUrlRef.current) releaseImageThumbUrl(retainedUrlRef.current);
+        retainedUrlRef.current = thumbUrl;
+        retainImageThumbUrl(thumbUrl);
+    }, []);
+    const dropThumbUrl = useCallback(() => {
+        if (!retainedUrlRef.current) return;
+        releaseImageThumbUrl(retainedUrlRef.current);
+        retainedUrlRef.current = "";
+    }, []);
+    // 组件卸载时释放持有的缩略图 URL。
+    useEffect(() => () => dropThumbUrl(), [dropThumbUrl]);
 
     useEffect(() => {
         let cancelled = false;
@@ -626,18 +642,22 @@ function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean;
         }
         if (!near) {
             // 已滚出视口（含延迟判定）：卸载图片释放解码内存，共享 blob 缓存保持不动。
+            dropThumbUrl();
             setUrl("");
             setLoading(false);
             return;
         }
         setLoading(true);
-        if (wantFull) {
+        if (tier === "full") {
             // 先用现成低分辨率图占位，原图就绪后再切换，避免切档闪白。
             // 用 fullResolved 标志位防止低分辨率回调晚于原图 resolve 时把高清 URL 覆盖。
             let fullResolved = false;
             void getImageThumbObjectUrl(storageKey).then((thumb) => {
                 if (cancelled || fullResolved) return;
-                if (thumb) setUrl(thumb);
+                if (thumb) {
+                    adoptThumbUrl(thumb);
+                    setUrl(thumb);
+                }
             });
             void cacheResourceObjectUrl(storageKey)
                 .then((resolved) => {
@@ -654,13 +674,24 @@ function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean;
                 });
         } else {
             void (async () => {
-                // 可见节点生成低分辨率图用高优先级。
-                const thumb = await getImageThumbObjectUrl(storageKey, { priority: 0 });
+                // 可见节点生成低分辨率图用高优先级；micro 档未就绪时先回退 768 缩略图，再回退原图。
+                const thumb = await getImageThumbObjectUrl(storageKey, { priority: 0, longEdge: tier === "micro" ? IMAGE_MICRO_LONG_EDGE : IMAGE_THUMB_LONG_EDGE });
                 if (cancelled) return;
                 if (thumb) {
+                    adoptThumbUrl(thumb);
                     setUrl(thumb);
                     setLoading(false);
                     return;
+                }
+                if (tier === "micro") {
+                    const fallbackThumb = await getImageThumbObjectUrl(storageKey, { priority: 0 });
+                    if (cancelled) return;
+                    if (fallbackThumb) {
+                        adoptThumbUrl(fallbackThumb);
+                        setUrl(fallbackThumb);
+                        setLoading(false);
+                        return;
+                    }
                 }
                 const original = await cacheResourceObjectUrl(storageKey);
                 if (cancelled) return;
@@ -675,7 +706,7 @@ function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean;
         return () => {
             cancelled = true;
         };
-    }, [fallback, isRemoteResource, near, storageKey, wantFull]);
+    }, [adoptThumbUrl, dropThumbUrl, fallback, isRemoteResource, near, storageKey, tier]);
 
     return { url, loading };
 }
