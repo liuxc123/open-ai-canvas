@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
-import { parseAssetStorageDocument, rebaseAssetSnapshot, serializeAssetStorageDocument, type AssetStorageDocument } from "@/lib/asset-storage-revision";
+import { applyAssetDiff, ASSET_STORE_KEY, clearShardedAssetStorage, diffAssetStorage, loadAssetStorageDocument, rebaseAssetSnapshot, type AssetStorageDocument } from "@/lib/asset-storage-revision";
 import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -56,7 +56,6 @@ type AssetStore = {
     cleanupImages: (extra?: unknown) => void;
 };
 
-export const ASSET_STORE_KEY = "infinite-canvas:asset_store";
 
 type PersistedAssetState = Pick<AssetStore, "assets">;
 type ObservedAssetPersist = {
@@ -98,21 +97,22 @@ function withAssetStorePersistenceSuppressed<T>(operation: () => T) {
 }
 
 async function commitPendingAssetStorePersistenceLocked(scope: string) {
-    const storage = localForageStorageForScope(scope);
     let committed: AssetStorageDocument | null = null;
 
     while (true) {
         const queued = queuedAssetPersists.get(scope);
         if (!queued) return committed;
 
-        const durable = parseAssetStorageDocument(await storage.getItem(queued.name), queued.baseAssets);
+        const durable = await loadAssetStorageDocument(scope, queued.baseAssets);
         const rebased = rebaseAssetSnapshot({
             document: durable,
             baseAssets: queued.baseAssets,
             localAssets: queued.assets,
             baseRevision: queued.baseRevision,
         });
-        await storage.setItem(queued.name, serializeAssetStorageDocument(rebased));
+        // 增量写入：只写变化的条目 + 更新索引
+        const diff = diffAssetStorage(durable, rebased);
+        await applyAssetDiff(scope, diff);
         committed = rebased;
         recordAssetStorageDocument(scope, rebased);
 
@@ -132,7 +132,7 @@ async function writeQueuedAssetPersist(scope: string, _token: number) {
 }
 
 async function readPersistedAssetDocumentForScope(scope: string) {
-    return parseAssetStorageDocument(await localForageStorageForScope(scope).getItem(ASSET_STORE_KEY));
+    return loadAssetStorageDocument(scope);
 }
 
 function trackAssetOperation<T>(operation: Promise<T>) {
@@ -206,13 +206,12 @@ export async function flushAssetStorePersistence() {
 const assetStorage: PersistStorage<AssetStore> = {
     getItem: async (name) => {
         const scope = getActiveUserScope();
-        const value = await localForageStorageForScope(scope).getItem(name);
-        if (!value) {
+        const document = await loadAssetStorageDocument(scope);
+        if (document.state.assets.length === 0 && document.storageRevision === 0) {
             assetMemoryStates.set(scope, { assets: [] });
             observedAssetPersists.set(scope, { assets: [], revision: 0 });
             return null;
         }
-        const document = parseAssetStorageDocument(value);
         const assets = await Promise.all(
             document.state.assets.map(async (asset) => {
                 // 视频和音频的数据结构不同，分别缩窄以保持 Asset 判别联合关系。
@@ -237,9 +236,9 @@ const assetStorage: PersistStorage<AssetStore> = {
         return hydratedDocument as unknown as StorageValue<AssetStore>;
     },
     setItem: persistAssetState,
-    removeItem: (name) => {
+    removeItem: async (name) => {
         const scope = getActiveUserScope();
-        return localForageStorageForScope(scope).removeItem(name);
+        await clearShardedAssetStorage(scope);
     },
 };
 
@@ -326,7 +325,8 @@ export const useAssetStore = create<AssetStore>()(
                                     storageRevision: durable.storageRevision + 1,
                                 };
                                 try {
-                                    await localForageStorageForScope(scope).setItem(ASSET_STORE_KEY, serializeAssetStorageDocument(nextDocument));
+                                    const diff = diffAssetStorage(durable, nextDocument);
+                                    await applyAssetDiff(scope, diff);
                                 } catch (error) {
                                     generationAssetFailures.set(generationAssetFailureKey(scope, effectKey), error);
                                     throw error;

@@ -125,6 +125,7 @@ export class LocalRuntimeSessionClient {
             throw new LocalRuntimeClientError("session_required", "本机会话尚未建立", 401);
         }
         const url = exactRuntimeUrl(pathAndQuery);
+        canonicalRuntimeQuery(url);
         const method = String(init.method ?? "GET").toUpperCase();
         const bodyBytes = requestBodyBytes(init.body);
         const headers = new Headers(init.headers);
@@ -345,6 +346,18 @@ function requestBodyBytes(body: BodyInit | null | undefined) {
     if (typeof body === "string") return new TextEncoder().encode(body);
     if (body instanceof Uint8Array) return body;
     throw new LocalRuntimeClientError("request_body_invalid", "本机请求体格式无效");
+}
+
+function canonicalRuntimeQuery(url: URL) {
+    if (!url.search) return;
+    const entries: Array<[string, string]> = [];
+    for (const key of new Set(url.searchParams.keys())) {
+        const values = url.searchParams.getAll(key);
+        if (values.length !== 1) throw new LocalRuntimeClientError("request_target_invalid", "本机请求查询参数无效");
+        entries.push([key, values[0]]);
+    }
+    entries.sort(([left], [right]) => left.localeCompare(right));
+    url.search = entries.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&");
 }
 
 function exactRuntimeUrl(pathAndQuery: string) {

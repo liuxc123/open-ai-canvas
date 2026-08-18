@@ -399,6 +399,60 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"id": c.Param("id")})
 	})
+	r.POST("/assets/batch-get", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		var req struct {
+			IDs []string `json:"ids"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if len(req.IDs) > 500 {
+			fail(c, http.StatusBadRequest, service.BadAuthRequest("单次最多拉取 500 条素材"))
+			return
+		}
+		assets, err := svc.BatchGetUserAssets(user.ID, req.IDs)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"assets": assets})
+	})
+	r.POST("/assets/batch-upsert", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "assets-write:"+user.ID, policy.Request.AssetWritePerMinute, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 20<<20)
+		var req struct {
+			Assets []json.RawMessage `json:"assets"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if len(req.Assets) > 200 {
+			fail(c, http.StatusBadRequest, service.BadAuthRequest("单次最多写入 200 条素材"))
+			return
+		}
+		summaries, err := svc.BatchUpsertUserAssets(user.ID, req.Assets)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"assets": summaries})
+	})
 	r.GET("/canvas-projects", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -468,6 +522,60 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, gin.H{"id": c.Param("id")})
+	})
+	r.POST("/canvas-projects/batch-get", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		var req struct {
+			IDs []string `json:"ids"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if len(req.IDs) > 500 {
+			fail(c, http.StatusBadRequest, service.BadAuthRequest("单次最多拉取 500 条画布"))
+			return
+		}
+		projects, err := svc.BatchGetUserCanvasProjects(user.ID, req.IDs)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"projects": projects})
+	})
+	r.POST("/canvas-projects/batch-upsert", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 20<<20)
+		var req struct {
+			Projects []json.RawMessage `json:"projects"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if len(req.Projects) > 200 {
+			fail(c, http.StatusBadRequest, service.BadAuthRequest("单次最多写入 200 条画布"))
+			return
+		}
+		summaries, err := svc.BatchUpsertUserCanvasProjects(user.ID, req.Projects)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"projects": summaries})
 	})
 
 	// ===== Seedance 资产管理 =====

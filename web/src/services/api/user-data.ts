@@ -25,12 +25,12 @@ export function listRemoteAssets() {
     return request<{ assets: RemoteUserDataSummary[] }>(api.get("/assets"));
 }
 
-export function getRemoteAsset(id: string) {
-    return request<{ asset: Asset }>(api.get(`/assets/${encodeURIComponent(id)}`));
+export function batchGetRemoteAssets(ids: string[]) {
+    return request<{ assets: Asset[] }>(api.post("/assets/batch-get", { ids }));
 }
 
-export function upsertRemoteAsset(asset: Asset) {
-    return request<{ asset: RemoteUserDataSummary }>(api.put(`/assets/${encodeURIComponent(asset.id)}`, { asset }));
+export function batchUpsertRemoteAssets(assets: Asset[]) {
+    return request<{ assets: RemoteUserDataSummary[] }>(api.post("/assets/batch-upsert", { assets }));
 }
 
 export function deleteRemoteAsset(id: string) {
@@ -41,12 +41,12 @@ export function listRemoteCanvasProjects() {
     return request<{ projects: RemoteUserDataSummary[] }>(api.get("/canvas-projects"));
 }
 
-export function getRemoteCanvasProject(id: string) {
-    return request<{ project: CanvasProject }>(api.get(`/canvas-projects/${encodeURIComponent(id)}`));
+export function batchGetRemoteCanvasProjects(ids: string[]) {
+    return request<{ projects: CanvasProject[] }>(api.post("/canvas-projects/batch-get", { ids }));
 }
 
-export function upsertRemoteCanvasProject(project: CanvasProject) {
-    return request<{ project: RemoteUserDataSummary }>(api.put(`/canvas-projects/${encodeURIComponent(project.id)}`, { project }));
+export function batchUpsertRemoteCanvasProjects(projects: CanvasProject[]) {
+    return request<{ projects: RemoteUserDataSummary[] }>(api.post("/canvas-projects/batch-upsert", { projects }));
 }
 
 export function deleteRemoteCanvasProject(id: string) {

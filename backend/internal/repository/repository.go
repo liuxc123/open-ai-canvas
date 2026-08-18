@@ -841,6 +841,62 @@ func (r *Repository) AssetForUser(userID string, id string) (*model.Asset, error
 	return &asset, nil
 }
 
+func (r *Repository) AssetsByIDs(userID string, ids []string) ([]model.Asset, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var assets []model.Asset
+	err := r.db.Where("user_id = ? AND id IN ?", userID, ids).Find(&assets).Error
+	return assets, err
+}
+
+func (r *Repository) CanvasProjectsByIDs(userID string, ids []string) ([]model.CanvasProject, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var projects []model.CanvasProject
+	err := r.db.Where("user_id = ? AND id IN ?", userID, ids).Find(&projects).Error
+	return projects, err
+}
+
+func (r *Repository) BatchUpsertAssets(assets []model.Asset) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		for i := range assets {
+			result := tx.Model(&model.Asset{}).
+				Where("id = ? AND user_id = ?", assets[i].ID, assets[i].UserID).
+				Updates(map[string]any{"kind": assets[i].Kind, "category": assets[i].Category, "status": assets[i].Status, "primary_version_id": assets[i].PrimaryVersionID, "title": assets[i].Title, "payload_json": assets[i].PayloadJSON, "updated_at": assets[i].UpdatedAt})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				if err := tx.Create(&assets[i]).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func (r *Repository) BatchUpsertCanvasProjects(projects []model.CanvasProject) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		for i := range projects {
+			result := tx.Model(&model.CanvasProject{}).
+				Where("id = ? AND user_id = ?", projects[i].ID, projects[i].UserID).
+				Updates(map[string]any{"project_id": projects[i].ProjectID, "title": projects[i].Title, "payload_json": projects[i].PayloadJSON, "updated_at": projects[i].UpdatedAt})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				if err := tx.Create(&projects[i]).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
 func (r *Repository) UpsertAsset(asset *model.Asset) error {
 	result := r.db.Model(&model.Asset{}).
 		Where("id = ? AND user_id = ?", asset.ID, asset.UserID).

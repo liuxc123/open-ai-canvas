@@ -1,6 +1,6 @@
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob, resolveImageUrl } from "@/services/image-storage";
-import { deleteRemoteAsset, deleteRemoteCanvasProject, getRemoteAsset, getRemoteCanvasProject, listRemoteAssets, listRemoteCanvasProjects, upsertRemoteAsset, upsertRemoteCanvasProject, type RemoteUserDataSummary } from "@/services/api/user-data";
+import { batchGetRemoteAssets, batchGetRemoteCanvasProjects, batchUpsertRemoteAssets, batchUpsertRemoteCanvasProjects, deleteRemoteAsset, deleteRemoteCanvasProject, listRemoteAssets, listRemoteCanvasProjects, type RemoteUserDataSummary } from "@/services/api/user-data";
 import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import type { Asset } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -22,6 +22,8 @@ let remoteAssetVersions = new Map<string, string>();
 let remoteProjectVersions = new Map<string, string>();
 
 const LOCAL_STORAGE_KEY_PATTERN = /^(image|video|audio|file|video-reference|audio-reference):/;
+const BATCH_FETCH_LIMIT = 500;
+const BATCH_UPsert_LIMIT = 200;
 
 export async function syncRemoteUserData(userId?: string | null) {
     await runRemoteUserDataSyncOperation(async () => {
@@ -35,8 +37,8 @@ export async function syncRemoteUserData(userId?: string | null) {
             const localProjects = useCanvasStore.getState().projects;
             const localAssets = useAssetStore.getState().assets;
             const [changedProjects, changedAssets] = await Promise.all([
-                fetchNewerRemoteItems(localProjects, remoteCanvas.projects, async (id) => (await getRemoteCanvasProject(id)).project),
-                fetchNewerRemoteItems(localAssets, remoteAssets.assets, async (id) => (await getRemoteAsset(id)).asset),
+                batchFetchNewerRemoteItems(localProjects, remoteCanvas.projects, (ids) => batchGetRemoteCanvasProjects(ids).then((r) => r.projects)),
+                batchFetchNewerRemoteItems(localAssets, remoteAssets.assets, (ids) => batchGetRemoteAssets(ids).then((r) => r.assets)),
             ]);
             const mergedProjects = mergeById(localProjects, changedProjects);
             const mergedAssets = mergeById(localAssets, await hydrateAssets(changedAssets));
@@ -220,14 +222,19 @@ async function saveRemoteUserDataBatch() {
         if (projects.length) useCanvasStore.getState().replaceProjects(replaceById(currentProjects, projects));
         if (assets.length) useAssetStore.getState().replaceAssets(replaceById(currentAssets, assets));
         applyingRemoteState = false;
-        // SQLite 和接口频控都要求写入保持有界；逐项提交还能准确记录已完成版本。
-        for (const project of projects) {
-            await upsertRemoteCanvasProject(project);
-            remoteProjectVersions.set(project.id, project.updatedAt);
+        if (assets.length) {
+            for (let i = 0; i < assets.length; i += BATCH_UPsert_LIMIT) {
+                const chunk = assets.slice(i, i + BATCH_UPsert_LIMIT);
+                const { assets: summaries } = await batchUpsertRemoteAssets(chunk);
+                for (const summary of summaries) remoteAssetVersions.set(summary.id, summary.updatedAt);
+            }
         }
-        for (const asset of assets) {
-            await upsertRemoteAsset(asset);
-            remoteAssetVersions.set(asset.id, asset.updatedAt);
+        if (projects.length) {
+            for (let i = 0; i < projects.length; i += BATCH_UPsert_LIMIT) {
+                const chunk = projects.slice(i, i + BATCH_UPsert_LIMIT);
+                const { projects: summaries } = await batchUpsertRemoteCanvasProjects(chunk);
+                for (const summary of summaries) remoteProjectVersions.set(summary.id, summary.updatedAt);
+            }
         }
         for (const id of deletedProjectIds) {
             await deleteRemoteCanvasProject(id);
@@ -358,13 +365,19 @@ function mergeById<T extends { id?: string; updatedAt?: string }>(local: T[], re
     return Array.from(items.values()).sort((a, b) => timeValue(b.updatedAt) - timeValue(a.updatedAt));
 }
 
-async function fetchNewerRemoteItems<T extends { id: string; updatedAt?: string }>(local: T[], remote: RemoteUserDataSummary[], fetchItem: (id: string) => Promise<T>) {
+async function batchFetchNewerRemoteItems<T extends { id: string; updatedAt?: string }>(local: T[], remote: RemoteUserDataSummary[], batchFetch: (ids: string[]) => Promise<T[]>): Promise<T[]> {
     const localById = new Map(local.map((item) => [item.id, item]));
-    const pending = remote.filter((item) => {
+    const pendingIds = remote.filter((item) => {
         const current = localById.get(item.id);
         return !current || timeValue(item.updatedAt) > timeValue(current.updatedAt);
-    });
-    return Promise.all(pending.map((item) => fetchItem(item.id)));
+    }).map((item) => item.id);
+    if (!pendingIds.length) return [];
+    const result: T[] = [];
+    for (let i = 0; i < pendingIds.length; i += BATCH_FETCH_LIMIT) {
+        const chunk = pendingIds.slice(i, i + BATCH_FETCH_LIMIT);
+        result.push(...await batchFetch(chunk));
+    }
+    return result;
 }
 
 function versionMap(items: Array<{ id: string; updatedAt?: string }>) {

@@ -68,6 +68,18 @@ describe("Local Runtime signed browser session", () => {
         expect(JSON.stringify(runtime.requests)).not.toContain(canary);
     });
 
+    test("request canonicalizes query parameters into the signed target order", async () => {
+        const keyStore = memoryKeyStore();
+        const runtime = runtimeFetchFixture();
+        const client = new LocalRuntimeSessionClient({ origin, keyStore, fetch: runtime.fetch, now: () => runtime.now });
+        await client.connect();
+
+        const response = await client.request("/dreamina/generate/tasks?limit=5&projectId=s-EDdtnYxDtHBa2YvSr2y&activeOnly=true", { method: "GET" });
+        const protectedRequest = runtime.requests.at(-1)!;
+        expect(protectedRequest.url).toBe(`${LOCAL_RUNTIME_ENDPOINT}/dreamina/generate/tasks?activeOnly=true&limit=5&projectId=s-EDdtnYxDtHBa2YvSr2y`);
+        expect(response.status).toBe(404);
+    });
+
     test("a new page reuses the browser key but obtains a new session without a bearer fallback", async () => {
         const keyStore = memoryKeyStore();
         const runtime = runtimeFetchFixture();

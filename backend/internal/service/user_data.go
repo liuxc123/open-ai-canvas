@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -106,6 +107,164 @@ func (s *Service) DeleteUserAsset(userID string, id string) error {
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	return s.deleteUserAssetWithResources(userID, id)
+}
+
+func (s *Service) BatchGetUserAssets(userID string, ids []string) ([]json.RawMessage, error) {
+	assets, err := s.repo.AssetsByIDs(userID, ids)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]json.RawMessage, 0, len(assets))
+	for _, asset := range assets {
+		if strings.TrimSpace(asset.PayloadJSON) != "" {
+			result = append(result, json.RawMessage(asset.PayloadJSON))
+		}
+	}
+	return result, nil
+}
+
+func (s *Service) BatchGetUserCanvasProjects(userID string, ids []string) ([]json.RawMessage, error) {
+	projects, err := s.repo.CanvasProjectsByIDs(userID, ids)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]json.RawMessage, 0, len(projects))
+	for _, project := range projects {
+		if strings.TrimSpace(project.PayloadJSON) != "" {
+			result = append(result, json.RawMessage(project.PayloadJSON))
+		}
+	}
+	return result, nil
+}
+
+func (s *Service) BatchUpsertUserAssets(userID string, raws []json.RawMessage) ([]UserDataSummary, error) {
+	if len(raws) == 0 {
+		return nil, nil
+	}
+	assets := make([]model.Asset, 0, len(raws))
+	var totalDeltaBytes int64
+	newCount := int64(0)
+	for _, raw := range raws {
+		asset, err := assetFromJSON(userID, raw)
+		if err != nil {
+			return nil, err
+		}
+		assets = append(assets, asset)
+	}
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	existingByID := make(map[string]*model.Asset, len(assets))
+	existingIDs := make([]string, 0, len(assets))
+	for _, a := range assets {
+		existingIDs = append(existingIDs, a.ID)
+	}
+	existingAssets, err := s.repo.AssetsByIDs(userID, existingIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range existingAssets {
+		existingByID[existingAssets[i].ID] = &existingAssets[i]
+	}
+	for _, a := range assets {
+		existing := existingByID[a.ID]
+		existingBytes := int64(0)
+		if existing != nil {
+			existingBytes = int64(len([]byte(existing.PayloadJSON)))
+		} else {
+			newCount++
+		}
+		totalDeltaBytes += int64(len(a.PayloadJSON)) - existingBytes
+	}
+	usage, err := s.repo.UserStorageUsage(userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateStructuredStorageQuotaWithPolicy(usage, "asset", newCount > 0, totalDeltaBytes, policy.Resource); err != nil {
+		return nil, err
+	}
+	if newCount > 0 && usage.AssetCount+newCount > policy.Resource.AssetCount {
+		return nil, BadAuthRequest(fmt.Sprintf("账号素材数量已达到 %d 个上限", policy.Resource.AssetCount))
+	}
+	if err := s.repo.BatchUpsertAssets(assets); err != nil {
+		return nil, err
+	}
+	if newCount > 0 {
+		s.recordActivity(userID, "asset", int(newCount))
+	}
+	result := make([]UserDataSummary, 0, len(assets))
+	for _, a := range assets {
+		result = append(result, UserDataSummary{ID: a.ID, Kind: a.Kind, Category: string(a.Category), Status: string(a.Status), Title: a.Title, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt})
+	}
+	return result, nil
+}
+
+func (s *Service) BatchUpsertUserCanvasProjects(userID string, raws []json.RawMessage) ([]UserDataSummary, error) {
+	if len(raws) == 0 {
+		return nil, nil
+	}
+	projects := make([]model.CanvasProject, 0, len(raws))
+	var totalDeltaBytes int64
+	newCount := int64(0)
+	for _, raw := range raws {
+		project, err := canvasProjectFromJSON(userID, raw)
+		if err != nil {
+			return nil, err
+		}
+		projects = append(projects, project)
+	}
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	existingByID := make(map[string]*model.CanvasProject, len(projects))
+	existingIDs := make([]string, 0, len(projects))
+	for _, p := range projects {
+		existingIDs = append(existingIDs, p.ID)
+	}
+	existingProjects, err := s.repo.CanvasProjectsByIDs(userID, existingIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range existingProjects {
+		existingByID[existingProjects[i].ID] = &existingProjects[i]
+	}
+	for _, p := range projects {
+		existing := existingByID[p.ID]
+		existingBytes := int64(0)
+		if existing != nil {
+			existingBytes = int64(len([]byte(existing.PayloadJSON)))
+		} else {
+			newCount++
+		}
+		totalDeltaBytes += int64(len(p.PayloadJSON)) - existingBytes
+	}
+	usage, err := s.repo.UserStorageUsage(userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateStructuredStorageQuotaWithPolicy(usage, "canvas", newCount > 0, totalDeltaBytes, policy.Resource); err != nil {
+		return nil, err
+	}
+	if newCount > 0 && usage.CanvasCount+newCount > policy.Resource.CanvasCount {
+		return nil, BadAuthRequest(fmt.Sprintf("账号画布数量已达到 %d 个上限", policy.Resource.CanvasCount))
+	}
+	if err := s.repo.BatchUpsertCanvasProjects(projects); err != nil {
+		return nil, err
+	}
+	if newCount > 0 {
+		s.recordActivity(userID, "canvas", int(newCount))
+	}
+	result := make([]UserDataSummary, 0, len(projects))
+	for _, p := range projects {
+		result = append(result, UserDataSummary{ID: p.ID, Title: p.Title, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt})
+	}
+	return result, nil
 }
 
 func (s *Service) UserAssets(userID string) ([]json.RawMessage, error) {
