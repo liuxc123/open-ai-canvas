@@ -304,12 +304,14 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         aria-label={`${modeDisplayName(mode)}提示词`}
                     />
                 </div>
-                <PromptResizeHandle
-                    height={height}
-                    min={bounds.min}
-                    max={bounds.max}
-                    onResize={expanded ? setManualExpandedPromptHeight : setManualPromptHeight}
-                />
+                {!expanded && (
+                    <PromptResizeHandle
+                        height={height}
+                        min={bounds.min}
+                        max={bounds.max}
+                        onResize={setManualPromptHeight}
+                    />
+                )}
             </>
         );
     };
