@@ -1,12 +1,3 @@
-// 图片缩略图服务：为已缓存到本地的远程图片生成低分辨率档位（默认 768 长边 WebP），
-// 供画布节点在缩放较小时使用，降低解码与 GPU 纹理内存开销。
-//
-// 设计要点：
-// - 纯本地派生数据：不触网、不改后端、不影响素材同步协议；
-// - key 按用户 + 资源 ID 维度存储，记录源 blob 的 size 作为版本指纹，原图更新后自动失效重建；
-// - 原图未缓存（可能要触发下载）时直接放弃生成，回退展示原图，避免为了缩略图反而下载原图；
-// - 生成走并发受控的优先级队列（可见节点优先），编码基于 OffscreenCanvas 异步 API，不阻塞交互。
-
 import localforage from "localforage";
 
 import { IMAGE_THUMB_LONG_EDGE, shouldGenerateImageThumb } from "@/lib/canvas/canvas-image-lod";
@@ -47,7 +38,7 @@ function thumbKey(userScope: string, resourceId: string) {
 }
 
 /**
- * 获取某个画布图片素材的缩略图 object URL。
+ * 获取某个画布图片素材的低分辨率 object URL。
  * - 命中内存 / IDB 缓存时同步返回（毫秒级）；
  * - 未生成过且原图已缓存时，入队后台生成，本次返回 ""（调用方回退原图）；
  * - 原图未缓存或环境不支持时返回 ""。
@@ -80,7 +71,7 @@ export async function getImageThumbObjectUrl(storageKey: string, options?: { pri
     return url;
 }
 
-/** 清空缩略图缓存（调试 / 存储压力场景使用）。 */
+/** 清空缓存（调试 / 存储压力场景使用）。 */
 export async function clearImageThumbCache(): Promise<void> {
     queue.length = 0;
     runningKeys.clear();
@@ -93,7 +84,7 @@ function enqueueGeneration(key: string, source: Blob, sourceVersion: string, pri
     if (runningKeys.has(key)) return;
     const existing = queue.find((job) => job.key === key);
     if (existing) {
-        // 已在队列中：更新为更高优先级（更小值），使可见节点的缩略图更早生成。
+        // 已在队列中：更新为更高优先级（更小值），使可见节点更早生成。
         if (priority < existing.priority) {
             existing.priority = priority;
             queue.sort((a, b) => a.priority - b.priority);
@@ -191,8 +182,8 @@ async function touchThumb(key: string) {
 }
 
 /**
- * touchThumb 的延迟合并版本：把多次访问合并为一次空闲时的 IDB 写入，避免拖拽等高频渲染路径上
- * 每帧都触发 getItem+setItem 的微任务排队。用 requestIdleCallback 退化到 setTimeout(0) 兜底。
+ * touchThumb 的延迟合并版本：把多次访问合并为一次 setTimeout(0) 后的 IDB 写入，避免拖拽等高频
+ * 渲染路径上每帧都触发 getItem+setItem 的微任务排队。
  */
 let touchTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingTouchKeys = new Set<string>();

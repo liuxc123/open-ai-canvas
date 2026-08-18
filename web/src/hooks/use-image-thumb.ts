@@ -4,9 +4,9 @@ import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { getImageThumbObjectUrl } from "@/services/resource-thumb";
 
 /**
- * 小尺寸图片展示场景的统一缩略图地址解析：素材已缓存到本地且支持缩略图时返回缩略图 object URL，
- * 否则返回调用方给定的回退地址（原图 dataURL / 远程 URL 均可）。不会为了缩略图触发下载原图；
- * 缩略图在后台生成完成后自动完成切换。
+ * 小尺寸图片展示场景的统一低分辨率地址解析：素材已缓存到本地且支持时返回低分辨率 object URL，
+ * 否则返回调用方给定的回退地址（原图 dataURL / 远程 URL 均可）。不会为了低分辨率图触发下载原图；
+ * 后台生成完成后自动完成切换。
  *
  * 渲染路径开销控制：用 ref 缓存已解析的 url，同一 storageKey + fallbackUrl 组合在重渲染时
  * 直接返回缓存值，不再每帧触发 async IDB 查询；仅当 storageKey 或 fallbackUrl 实际变化时才重新解析。

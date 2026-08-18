@@ -593,9 +593,9 @@ function ImageContent({
 
 /**
  * 图片节点专用的资源地址解析：在原有"靠近视口才加载"的基础上叠加
- * 1) 缩略图 LOD（远看用 768 档缩略图，按屏幕需求分辨率 + 迟滞切换原图）；
+ * 1) LOD（远看用低分辨率档，按屏幕需求分辨率 + 迟滞切换原图）；
  * 2) 滚出视口后卸载图片（src 置空释放解码位图 / GPU 纹理，blob 缓存不动，滚回来毫秒级恢复）；
- * 3) 性能模式（reduceMediaEffects）下强制使用缩略图档。
+ * 3) 性能模式（reduceMediaEffects）下强制使用低分辨率档。
  */
 function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean; scale: number; preferThumb: boolean }) {
     const storageKey = node.metadata?.storageKey || "";
@@ -608,7 +608,7 @@ function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean;
 
     const displayLongEdge = imageNodeDisplayLongEdge(node.width, node.height, scale, typeof window === "undefined" ? 1 : window.devicePixelRatio);
     useEffect(() => {
-        // 性能模式下强制缩略图档；否则按迟滞阈值在缩略图与原图间切换。
+        // 性能模式下强制低分辨率档；否则按迟滞阈值在低分辨率与原图间切换。
         if (preferThumb) {
             setFullResolution(false);
             return;
@@ -632,8 +632,8 @@ function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean;
         }
         setLoading(true);
         if (wantFull) {
-            // 先用现成缩略图占位，原图就绪后再切换，避免切档闪白。
-            // 用 fullResolved 标志位防止缩略图回调晚于原图 resolve 时把高清 URL 覆盖成缩略图。
+            // 先用现成低分辨率图占位，原图就绪后再切换，避免切档闪白。
+            // 用 fullResolved 标志位防止低分辨率回调晚于原图 resolve 时把高清 URL 覆盖。
             let fullResolved = false;
             void getImageThumbObjectUrl(storageKey).then((thumb) => {
                 if (cancelled || fullResolved) return;
@@ -654,7 +654,7 @@ function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean;
                 });
         } else {
             void (async () => {
-                // 可见节点生成缩略图用高优先级。
+                // 可见节点生成低分辨率图用高优先级。
                 const thumb = await getImageThumbObjectUrl(storageKey, { priority: 0 });
                 if (cancelled) return;
                 if (thumb) {
