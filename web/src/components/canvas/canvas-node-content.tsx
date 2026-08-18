@@ -633,17 +633,22 @@ function useImageNodeResourceUrl(node: CanvasNodeData, options: { near: boolean;
         setLoading(true);
         if (wantFull) {
             // 先用现成缩略图占位，原图就绪后再切换，避免切档闪白。
+            // 用 fullResolved 标志位防止缩略图回调晚于原图 resolve 时把高清 URL 覆盖成缩略图。
+            let fullResolved = false;
             void getImageThumbObjectUrl(storageKey).then((thumb) => {
-                if (!cancelled && thumb) setUrl(thumb);
+                if (cancelled || fullResolved) return;
+                if (thumb) setUrl(thumb);
             });
             void cacheResourceObjectUrl(storageKey)
                 .then((resolved) => {
                     if (cancelled) return;
+                    fullResolved = true;
                     setUrl(resolved || fallback);
                     setLoading(false);
                 })
                 .catch(() => {
                     if (cancelled) return;
+                    fullResolved = true;
                     setUrl(fallback);
                     setLoading(false);
                 });

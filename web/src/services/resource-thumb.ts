@@ -91,6 +91,16 @@ export async function clearImageThumbCache(): Promise<void> {
 
 function enqueueGeneration(key: string, source: Blob, sourceVersion: string, priority: number) {
     if (runningKeys.has(key)) return;
+    const existing = queue.find((job) => job.key === key);
+    if (existing) {
+        // 已在队列中：更新为更高优先级（更小值），使可见节点的缩略图更早生成。
+        if (priority < existing.priority) {
+            existing.priority = priority;
+            queue.sort((a, b) => a.priority - b.priority);
+            pumpQueue();
+        }
+        return;
+    }
     queue.push({
         key,
         priority,
