@@ -1,8 +1,9 @@
-import type { SelectionBox, ViewportTransform } from "@/types/canvas";
+import type { Position, SelectionBox, ViewportTransform } from "@/types/canvas";
 
 export const CANVAS_VIEWPORT_PREVIEW_EVENT = "canvas:viewport-preview";
 export const CANVAS_GRAPHICS_VIEWPORT_PREVIEW_EVENT = "canvas:graphics-viewport-preview";
 export const CANVAS_SELECTION_PREVIEW_EVENT = "canvas:selection-preview";
+export const CANVAS_DRAFT_MOVE_EVENT = "canvas:draft-move";
 
 export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewport: ViewportTransform, notify = true) {
     if (!container) return;
@@ -47,4 +48,14 @@ export function subscribeCanvasSelectionPreview(container: HTMLDivElement, liste
     const handlePreview = (event: Event) => listener((event as CustomEvent<SelectionBox>).detail);
     container.addEventListener(CANVAS_SELECTION_PREVIEW_EVENT, handlePreview);
     return () => container.removeEventListener(CANVAS_SELECTION_PREVIEW_EVENT, handlePreview);
+}
+
+export function dispatchCanvasDraftMove(container: HTMLDivElement | null, position: Position) {
+    container?.dispatchEvent(new CustomEvent<Position>(CANVAS_DRAFT_MOVE_EVENT, { detail: position }));
+}
+
+export function subscribeCanvasDraftMove(container: HTMLDivElement, listener: (position: Position) => void) {
+    const handleDraftMove = (event: Event) => listener((event as CustomEvent<Position>).detail);
+    container.addEventListener(CANVAS_DRAFT_MOVE_EVENT, handleDraftMove);
+    return () => container.removeEventListener(CANVAS_DRAFT_MOVE_EVENT, handleDraftMove);
 }

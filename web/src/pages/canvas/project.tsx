@@ -792,7 +792,6 @@ function InfiniteCanvasPage() {
         batchConnectionPreview,
         beginBatchConnectionMode,
         startBatchConnection,
-        mouseWorld,
         pendingConnectionCreate,
         setConnecting,
     } = useCanvasConnectionController({
@@ -802,6 +801,7 @@ function InfiniteCanvasPage() {
         nodesRef,
         connectionsRef,
         viewportRef,
+        containerRef,
         scriptScrollTopById,
         screenToCanvas,
         setNodes,
@@ -1709,7 +1709,6 @@ function InfiniteCanvasPage() {
                                         scriptScrollTopById={scriptScrollTopById}
                                         connectingParams={connectingParams}
                                         batchConnectionPreview={batchConnectionPreview}
-                                        mouseWorld={mouseWorld}
                                         connectionTargetNodeId={connectionTargetNodeId}
                                         connectionTargetAnchorRatio={connectionTargetAnchorRatio}
                                         nodeById={nodeById}
@@ -1739,7 +1738,6 @@ function InfiniteCanvasPage() {
                                     relatedConnectionIds={relatedHighlight.connectionIds}
                                     scriptScrollTopById={scriptScrollTopById}
                                     connectingParams={connectingParams}
-                                    mouseWorld={mouseWorld}
                                     connectionTargetNodeId={connectionTargetNodeId}
                                     nodeById={nodeById}
                                     visibleNodes={visibleNodes}

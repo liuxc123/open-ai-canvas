@@ -21,7 +21,6 @@ type CanvasProjectWorldLayersProps = {
     relatedConnectionIds: Set<string>;
     scriptScrollTopById: Record<string, number>;
     connectingParams: ConnectionHandle | null;
-    mouseWorld: Position;
     connectionTargetNodeId: string | null;
     nodeById: Map<string, CanvasNodeData>;
     visibleNodes: CanvasNodeData[];

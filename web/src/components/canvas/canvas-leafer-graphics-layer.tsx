@@ -3,7 +3,7 @@ import { Group, Leafer, Path, Rect } from "leafer-ui";
 
 import { activeConnectionPath, canvasConnectionPath } from "@/components/canvas/canvas-connections";
 import type { CanvasBatchConnectionPreview } from "@/lib/canvas/canvas-batch-connection";
-import { subscribeCanvasGraphicsViewportPreview, subscribeCanvasSelectionPreview } from "@/lib/canvas/canvas-live-viewport";
+import { subscribeCanvasDraftMove, subscribeCanvasGraphicsViewportPreview, subscribeCanvasSelectionPreview } from "@/lib/canvas/canvas-live-viewport";
 import { calculateCanvasPreviewTransform, sameCanvasViewport, shouldRebaseCanvasRaster } from "@/lib/canvas/canvas-leafer-viewport";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasDisplayConnection, CanvasNodeData, ConnectionHandle, Position, SelectionBox, ViewportTransform } from "@/types/canvas";
@@ -20,7 +20,6 @@ type CanvasLeaferGraphicsLayerProps = {
     scriptScrollTopById: Record<string, number>;
     connectingParams: ConnectionHandle | null;
     batchConnectionPreview: CanvasBatchConnectionPreview | null;
-    mouseWorld: Position;
     connectionTargetNodeId: string | null;
     connectionTargetAnchorRatio?: number;
     nodeById: Map<string, CanvasNodeData>;
@@ -48,6 +47,7 @@ export function CanvasLeaferGraphicsLayer(props: CanvasLeaferGraphicsLayerProps)
     const sceneRef = useRef<GraphicsScene | null>(null);
     const viewportRef = useRef(props.viewport);
     const rasterViewportRef = useRef(props.viewport);
+    const mouseWorldRef = useRef<Position>({ x: 0, y: 0 });
     const propsRef = useRef(props);
     propsRef.current = props;
 
@@ -94,11 +94,38 @@ export function CanvasLeaferGraphicsLayer(props: CanvasLeaferGraphicsLayerProps)
         const unsubscribeSelection = subscribeCanvasSelectionPreview(container, (selection) => {
             syncSelection(scene.selection, selection, propsRef.current.theme);
         });
+        const unsubscribeDraftMove = subscribeCanvasDraftMove(container, (mouseWorld) => {
+            mouseWorldRef.current = mouseWorld;
+            const p = propsRef.current;
+            const connecting = p.connectingParams;
+            if (connecting) {
+                scene.draft.path = activeConnectionPath(
+                    p.nodeById.get(connecting.nodeId),
+                    connecting,
+                    mouseWorld,
+                    p.connectionTargetNodeId ? p.nodeById.get(p.connectionTargetNodeId) : undefined,
+                    p.scriptScrollTopById[connecting.nodeId] || 0,
+                    p.connectionTargetAnchorRatio,
+                );
+            }
+            const batch = p.batchConnectionPreview;
+            if (!batch) return;
+            const target = batch.targetNodeId ? p.nodeById.get(batch.targetNodeId) : undefined;
+            batch.sourceNodeIds.forEach((sourceNodeId) => {
+                const source = p.nodeById.get(sourceNodeId);
+                if (!source) return;
+                const handle: ConnectionHandle = { nodeId: source.id, handleType: "source" };
+                const pathD = activeConnectionPath(source, handle, batch.mouseWorld, target, p.scriptScrollTopById[source.id] || 0, batch.targetAnchorRatio);
+                const path = scene.batchDraftPaths.get(sourceNodeId);
+                if (path) path.path = pathD;
+            });
+        });
         resize();
 
         return () => {
             unsubscribe();
             unsubscribeSelection();
+            unsubscribeDraftMove();
             resizeObserver.disconnect();
             window.removeEventListener("resize", resize);
             scene.leafer.destroy(true);
@@ -115,8 +142,8 @@ export function CanvasLeaferGraphicsLayer(props: CanvasLeaferGraphicsLayerProps)
     useLayoutEffect(() => {
         const scene = sceneRef.current;
         if (!scene) return;
-        syncOverlayContent(scene, props, viewportRef.current.k);
-    }, [props.batchConnectionPreview, props.connectingParams, props.connectionTargetAnchorRatio, props.connectionTargetNodeId, props.mouseWorld, props.nodeById, props.scriptScrollTopById, props.selectedNodeBounds, props.selectionBox, props.theme]);
+        syncOverlayContent(scene, props, viewportRef.current.k, mouseWorldRef.current);
+    }, [props.batchConnectionPreview, props.connectingParams, props.connectionTargetAnchorRatio, props.connectionTargetNodeId, props.nodeById, props.scriptScrollTopById, props.selectedNodeBounds, props.selectionBox, props.theme]);
 
     useLayoutEffect(() => {
         const scene = sceneRef.current;
@@ -210,7 +237,7 @@ function rebuildConnections(scene: GraphicsScene, props: CanvasLeaferGraphicsLay
     }
 }
 
-function syncOverlayContent(scene: GraphicsScene, props: CanvasLeaferGraphicsLayerProps, viewportScale: number) {
+function syncOverlayContent(scene: GraphicsScene, props: CanvasLeaferGraphicsLayerProps, viewportScale: number, mouseWorld: Position) {
     const selection = props.selectionBox;
     scene.selection.visible = Boolean(selection);
     if (selection) {
@@ -231,7 +258,7 @@ function syncOverlayContent(scene: GraphicsScene, props: CanvasLeaferGraphicsLay
             path: activeConnectionPath(
                 props.nodeById.get(connecting.nodeId),
                 connecting,
-                props.mouseWorld,
+                mouseWorld,
                 props.connectionTargetNodeId ? props.nodeById.get(props.connectionTargetNodeId) : undefined,
                 props.scriptScrollTopById[connecting.nodeId] || 0,
                 props.connectionTargetAnchorRatio,

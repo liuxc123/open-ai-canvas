@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
 
@@ -10,6 +10,7 @@ import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor,
 import { createCanvasDrawingFromImage } from "@/lib/canvas/canvas-drawing-storage";
 import { isDrawingEngineAvailable, type CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
+import { dispatchCanvasDraftMove } from "@/lib/canvas/canvas-live-viewport";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
@@ -21,6 +22,7 @@ type UseCanvasConnectionControllerOptions = {
     nodesRef: { current: CanvasNodeData[] };
     connectionsRef: { current: CanvasConnection[] };
     viewportRef: { current: ViewportTransform };
+    containerRef: RefObject<HTMLDivElement | null>;
     scriptScrollTopById: Record<string, number>;
     screenToCanvas: (clientX: number, clientY: number) => Position;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
@@ -52,6 +54,7 @@ export function useCanvasConnectionController({
     nodesRef,
     connectionsRef,
     viewportRef,
+    containerRef,
     scriptScrollTopById,
     screenToCanvas,
     setNodes,
@@ -69,7 +72,7 @@ export function useCanvasConnectionController({
     const [connectionTargetAnchorRatio, setConnectionTargetAnchorRatio] = useState<number | undefined>();
     const [pendingConnectionCreate, setPendingConnectionCreate] = useState<PendingConnectionCreate | null>(null);
     const [batchConnectionPreview, setBatchConnectionPreview] = useState<CanvasBatchConnectionPreview | null>(null);
-    const [mouseWorld, setMouseWorld] = useState<Position>({ x: 0, y: 0 });
+    const mouseWorldRef = useRef<Position>({ x: 0, y: 0 });
     const connectingParamsRef = useRef(connectingParams);
     const connectingPointerIdRef = useRef<number | null>(null);
     const connectingPointerStartRef = useRef<Position | null>(null);
@@ -82,6 +85,11 @@ export function useCanvasConnectionController({
         connectingParamsRef.current = connectingParams;
         pendingConnectionCreateRef.current = pendingConnectionCreate;
     }, [connectingParams, pendingConnectionCreate]);
+
+    const updateMouseWorld = useCallback((position: Position) => {
+        mouseWorldRef.current = position;
+        dispatchCanvasDraftMove(containerRef.current, position);
+    }, [containerRef]);
 
     const updateBatchConnectionPreview = useCallback((next: CanvasBatchConnectionPreview | null) => {
         batchConnectionPreviewRef.current = next;
@@ -117,6 +125,7 @@ export function useCanvasConnectionController({
     }, [clearBatchConnection, closeConnectionCreateMenu, setConnecting]);
 
     const previewBatchConnection = useCallback((sourceNodeIds: string[], targetNodeId: string | null, targetHandleId: string | undefined, targetAnchorRatio: number | undefined, mouseWorld: Position) => {
+        mouseWorldRef.current = mouseWorld;
         const plan = targetNodeId
             ? planBatchConnections({ sourceNodeIds, targetNodeId, targetHandleId, targetAnchorRatio, nodes: nodesRef.current, connections: connectionsRef.current, config })
             : null;
@@ -126,8 +135,9 @@ export function useCanvasConnectionController({
         }).length;
         const status = !targetNodeId || !plan ? "idle" : plan.connections.length === eligibleSourceCount ? "valid" : plan.connections.length ? "partial" : "invalid";
         updateBatchConnectionPreview({ sourceNodeIds, targetNodeId, targetHandleId, targetAnchorRatio, mouseWorld, status });
+        dispatchCanvasDraftMove(containerRef.current, mouseWorld);
         return plan;
-    }, [config, connectionsRef, nodesRef, updateBatchConnectionPreview]);
+    }, [config, connectionsRef, nodesRef, updateBatchConnectionPreview, containerRef]);
 
     const commitBatchConnection = useCallback((sourceNodeIds: string[], targetNodeId: string, targetHandleId?: string, targetAnchorRatio?: number) => {
         const plan = planBatchConnections({ sourceNodeIds, targetNodeId, targetHandleId, targetAnchorRatio, nodes: nodesRef.current, connections: connectionsRef.current, config });
@@ -458,10 +468,10 @@ export function useCanvasConnectionController({
         const pending: PendingConnectionCreate = request;
         pendingConnectionCreateRef.current = pending;
         setPendingConnectionCreate(pending);
-        setMouseWorld(position);
+        updateMouseWorld(position);
         clearBatchConnection();
         return true;
-    }, [clearBatchConnection, message, nodesRef, screenToCanvas]);
+    }, [clearBatchConnection, message, nodesRef, screenToCanvas, updateMouseWorld]);
 
     const handleBatchConnectionTargetClick = useCallback((event: ReactPointerEvent | ReactMouseEvent) => {
         if (!batchConnectionPreviewRef.current) return false;
@@ -482,12 +492,12 @@ export function useCanvasConnectionController({
             setConnecting(null);
         } else {
             const position = screenToCanvas(clientX, clientY);
-            setMouseWorld(position);
+            updateMouseWorld(position);
             const pending = { connection: currentConnection, position };
             pendingConnectionCreateRef.current = pending;
             setPendingConnectionCreate(pending);
         }
-    }, [connectNodes, getConnectionDropTarget, screenToCanvas, setConnecting]);
+    }, [connectNodes, getConnectionDropTarget, screenToCanvas, setConnecting, updateMouseWorld]);
 
     const handleConnectStart = useCallback((event: ReactPointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string, anchorRatio?: number) => {
         event.preventDefault();
@@ -500,12 +510,12 @@ export function useCanvasConnectionController({
         if (batchConnectionPreviewRef.current) clearBatchConnection();
         connectingPointerIdRef.current = event.pointerId;
         connectingPointerStartRef.current = { x: event.clientX, y: event.clientY };
-        setMouseWorld(screenToCanvas(event.clientX, event.clientY));
+        updateMouseWorld(screenToCanvas(event.clientX, event.clientY));
         setConnecting({ nodeId, handleType, handleId, anchorRatio });
         setConnectionTargetNodeId(null);
         setConnectionTargetAnchorRatio(undefined);
         setSelectedConnectionId(null);
-    }, [clearBatchConnection, commitBatchConnection, screenToCanvas, setConnecting, setSelectedConnectionId]);
+    }, [clearBatchConnection, commitBatchConnection, screenToCanvas, setConnecting, setSelectedConnectionId, updateMouseWorld]);
 
     useEffect(() => {
         const handlePointerMove = (event: PointerEvent) => {
@@ -521,7 +531,7 @@ export function useCanvasConnectionController({
             const dropTarget = getConnectionDropTarget(event.clientX, event.clientY, current);
             setConnectionTargetNodeId(dropTarget.nodeId);
             setConnectionTargetAnchorRatio(dropTarget.anchorRatio);
-            setMouseWorld(screenToCanvas(event.clientX, event.clientY));
+            updateMouseWorld(screenToCanvas(event.clientX, event.clientY));
         };
         const handlePointerUp = (event: PointerEvent) => {
             if (batchConnectionPointerIdRef.current === event.pointerId) {
@@ -579,7 +589,7 @@ export function useCanvasConnectionController({
             window.removeEventListener("pointercancel", handlePointerCancel);
             window.removeEventListener("blur", cancel);
         };
-    }, [clearBatchConnection, commitBatchConnection, finishBatchConnection, finishConnection, getBatchConnectionDropTarget, getConnectionDropTarget, openBatchConnectionCreateMenu, previewBatchConnection, screenToCanvas, setConnecting]);
+    }, [clearBatchConnection, commitBatchConnection, finishBatchConnection, finishConnection, getBatchConnectionDropTarget, getConnectionDropTarget, openBatchConnectionCreateMenu, previewBatchConnection, screenToCanvas, setConnecting, updateMouseWorld]);
 
     return {
         cancelPendingConnectionCreate,
@@ -594,7 +604,6 @@ export function useCanvasConnectionController({
         batchConnectionPreview,
         beginBatchConnectionMode,
         startBatchConnection,
-        mouseWorld,
         pendingConnectionCreate,
         setConnecting,
     };
