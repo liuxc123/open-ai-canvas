@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { ChevronDown, ChevronRight, Video } from "lucide-react";
 
 import { CometCard } from "@/components/ui/aceternity/comet-card";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { FRAME_HEADER_HEIGHT, FRAME_PADDING } from "@/lib/canvas/canvas-frame";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -262,7 +263,7 @@ function FramePreview({ nodes, frame, theme }: { nodes: CanvasNodeData[]; frame:
             {layout.length ? (
                 layout.map(({ node, ...style }) => (
                     <div key={node.id} className="absolute overflow-hidden rounded-[var(--r-xs)] border" style={{ ...style, background: theme.node.fill, borderColor: theme.node.stroke }}>
-                        {node.type === CanvasNodeType.Image && node.metadata?.content ? <img src={node.metadata.content} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable={false} /> : null}
+                        {node.type === CanvasNodeType.Image && node.metadata?.content ? <FramePreviewImage node={node} /> : null}
                         {node.type === CanvasNodeType.Video && node.metadata?.content ? <video src={node.metadata.content} className="h-full w-full object-cover" muted playsInline preload="metadata" /> : null}
                         {node.type === CanvasNodeType.Video && !node.metadata?.content ? <Video className="m-auto size-4 h-full opacity-40" /> : null}
                         {node.type === CanvasNodeType.Text ? <div className="line-clamp-3 p-1 text-[var(--fs-nano)] leading-[9px]" style={{ color: theme.node.text }}>{node.metadata?.content || node.title}</div> : null}
@@ -274,6 +275,11 @@ function FramePreview({ nodes, frame, theme }: { nodes: CanvasNodeData[]; frame:
             )}
         </div>
     );
+}
+
+function FramePreviewImage({ node }: { node: CanvasNodeData }) {
+    const url = useImageThumbUrl(node.metadata?.storageKey, node.metadata?.content || "");
+    return <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable={false} />;
 }
 
 function ResizeHandle({ corner, scale, theme, onMouseDown }: { corner: ResizeCorner; scale: number; theme: CanvasTheme; onMouseDown: (event: ReactMouseEvent, corner: ResizeCorner) => void }) {

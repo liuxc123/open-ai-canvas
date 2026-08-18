@@ -5,7 +5,7 @@ import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal"
 import { SeedanceAssetStatus } from "@/components/canvas/seedance-asset-status";
 import { useSeedanceAssetStatus, useRegisterSeedanceAsset } from "@/services/api/seedance-asset";
 import { compileCharacterReferencePrompt } from "@/lib/canvas/canvas-character-reference";
-import { resourceFileUrl } from "@/services/api/resources";
+import { resourceFileUrl, resourceStorageKey } from "@/services/api/resources";
 import { useEffectiveConfig, resolveModelChannel } from "@/stores/use-config-store";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import type { ProjectAsset, ProjectDetail } from "@/services/api/projects";
@@ -40,6 +40,7 @@ export function CanvasProjectAssetModal({ open, detail, initialCategory = "all",
             kindLabel: character ? "角色卡" : media?.kind === "video" ? "视频" : media?.kind === "audio" ? "音频" : media?.kind === "text" ? "文本" : "图片",
             asset: media,
             imageUrl: coverRepresentation ? resourceFileUrl(coverRepresentation.resourceId) : undefined,
+            thumbStorageKey: coverRepresentation ? resourceStorageKey(coverRepresentation.resourceId) : undefined,
             imageFit: character ? "contain" : "cover",
             description: character ? `${character.character?.visualStatus === "ready" ? "形象就绪" : "形象待完善"} · ${character.character?.voiceStatus === "ready" ? "声音已绑定" : "声音未绑定"}` : undefined,
             searchText: media?.tags.join(" "),
@@ -109,6 +110,7 @@ export function projectCharacterToInsertPayload(asset: ProjectAsset): InsertAsse
         aliases: Array.isArray(definition.aliases) ? definition.aliases.filter((alias): alias is string => typeof alias === "string") : [],
         definition,
         coverUrl: cover ? resourceFileUrl(cover.resourceId) : undefined,
+        coverStorageKey: cover ? resourceStorageKey(cover.resourceId) : undefined,
         visualStatus: card.visualStatus,
         voiceStatus: card.voiceStatus,
         voiceName: card.voice?.profile.name,

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Check, ChevronDown, Image as ImageIcon } from "lucide-react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 
@@ -11,12 +12,14 @@ type VideoFrameOption = {
     label: string;
     title: string;
     previewUrl?: string;
+    storageKey?: string;
 };
 
 type CompactMenuItem = {
     value: string;
     label: string;
     previewUrl?: string;
+    storageKey?: string;
 };
 
 type CanvasVideoPromptToolsProps = {
@@ -44,34 +47,22 @@ export function CanvasVideoPromptTools({ metadata, frameOptions, onMetadataChang
     if (!frameOptions.length) return null;
 
     return (
-        <div
-            className="grid min-w-0 grid-cols-2 items-center gap-1"
-            data-canvas-no-zoom
-            onMouseDown={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
-        >
+        <div className="grid min-w-0 grid-cols-2 items-center gap-1" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
             <FrameMenu label="首帧" value={startFrame} options={frameOptions} theme={theme} onChange={(value) => setFrame("videoStartFrameNodeId", value)} />
             <FrameMenu label="尾帧" value={endFrame} options={frameOptions} theme={theme} onChange={(value) => setFrame("videoEndFrameNodeId", value)} />
         </div>
     );
 }
 
+function FrameOptionThumb({ previewUrl, storageKey }: { previewUrl: string; storageKey?: string }) {
+    const url = useImageThumbUrl(storageKey, previewUrl);
+    return <img src={url} alt="" className="size-4 shrink-0 rounded object-cover" />;
+}
+
 function FrameMenu({ label, value, options, theme, onChange }: { label: string; value: string; options: VideoFrameOption[]; theme: CanvasTheme; onChange: (value: string) => void }) {
     const selected = options.find((item) => item.nodeId === value);
     const items = [{ value: EMPTY_FRAME_VALUE, label: "不指定" }, ...options.map((option) => ({ value: option.nodeId, label: `${option.label} · ${option.title}`, previewUrl: option.previewUrl }))];
-    return (
-        <CompactMenuButton
-            theme={theme}
-            title={label}
-            label={selected?.label || label}
-            icon={<ImageIcon className="size-3.5 shrink-0 opacity-90" />}
-            value={value}
-            items={items}
-            menuWidth={220}
-            maxMenuHeight={208}
-            onSelect={onChange}
-        />
-    );
+    return <CompactMenuButton theme={theme} title={label} label={selected?.label || label} icon={<ImageIcon className="size-3.5 shrink-0 opacity-90" />} value={value} items={items} menuWidth={220} maxMenuHeight={208} onSelect={onChange} />;
 }
 
 function CompactMenuButton({
@@ -187,7 +178,7 @@ function CompactMenuButton({
                                           setOpen(false);
                                       }}
                                   >
-                                      {item.previewUrl ? <img src={item.previewUrl} alt="" className="size-4 shrink-0 rounded object-cover" /> : null}
+                                      {item.previewUrl ? <FrameOptionThumb previewUrl={item.previewUrl} storageKey={item.storageKey} /> : null}
                                       <span className="min-w-0 flex-1 truncate">{item.label}</span>
                                       {selected ? <Check className="size-3.5 shrink-0" /> : null}
                                   </button>

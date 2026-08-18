@@ -3,6 +3,7 @@ import { Check, FileText, FolderOpen, Image as ImageIcon, LoaderCircle, Music2, 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { AssetMediaPreview } from "@/components/asset-media-preview";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { cn } from "@/lib/utils";
 import type { Asset } from "@/stores/use-asset-store";
 
@@ -13,6 +14,7 @@ export type AssetLibraryPickerItem = {
     kindLabel: string;
     asset?: Asset;
     imageUrl?: string;
+    thumbStorageKey?: string;
     imageFit?: "cover" | "contain";
     description?: string;
     searchText?: string;
@@ -212,7 +214,7 @@ function PickerCard({ item, selected, onToggle, renderItemSuffix }: { item: Asse
     return (
         <button type="button" className={cn("asset-picker-card", selected && "is-selected", disabled && "is-disabled")} onClick={onToggle} disabled={disabled} aria-pressed={selected} title={item.disabledReason || item.title}>
             <div className="asset-picker-card-media">
-                {item.imageUrl ? <img src={item.imageUrl} alt={item.title} loading="lazy" decoding="async" className={item.imageFit === "contain" ? "is-contain" : undefined} /> : <AssetMediaPreview asset={item.asset} alt={item.title} fallback={<div className="asset-picker-card-fallback">{kindIcon(item.kindLabel)}</div>} />}
+                {item.imageUrl ? <PickerCardImage url={item.imageUrl} storageKey={item.thumbStorageKey} title={item.title} fit={item.imageFit} /> : <AssetMediaPreview asset={item.asset} alt={item.title} fallback={<div className="asset-picker-card-fallback">{kindIcon(item.kindLabel)}</div>} />}
                 <span className="asset-picker-card-check"><Check /></span>
                 <span className="asset-picker-card-kind">{item.kindLabel}</span>
                 {item.disabledReason ? <span className="asset-picker-card-lock">{item.disabledReason}</span> : null}
@@ -220,6 +222,11 @@ function PickerCard({ item, selected, onToggle, renderItemSuffix }: { item: Asse
             <div className="asset-picker-card-copy"><strong>{item.title || "未命名素材"}</strong>{item.description ? <span>{item.description}</span> : null}{renderItemSuffix ? renderItemSuffix(item) : null}</div>
         </button>
     );
+}
+
+function PickerCardImage({ url, storageKey, title, fit }: { url: string; storageKey?: string; title: string; fit?: "cover" | "contain" }) {
+    const displayUrl = useImageThumbUrl(storageKey, url);
+    return <img src={displayUrl} alt={title} loading="lazy" decoding="async" className={fit === "contain" ? "is-contain" : undefined} />;
 }
 
 function kindIcon(label: string): ReactNode {

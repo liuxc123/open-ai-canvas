@@ -73,6 +73,20 @@ export async function primeResourceBlobCache(storageKey: string, blob: Blob) {
     return url;
 }
 
+/**
+ * 只读查看某个素材是否已缓存到本地（内存或 IDB），不会触发下载。
+ * 缩略图生成等派生逻辑用它避免"为了缩略图反而下载原图"。
+ */
+export async function peekCachedResourceBlob(storageKey: string) {
+    const target = await cacheTarget(storageKey).catch(() => null);
+    if (!target) return null;
+    const sessionBlob = sessionBlobs.get(target.key);
+    if (sessionBlob) return sessionBlob;
+    const cached = await blobStore.getItem<Blob>(target.key);
+    if (cached) void touchCacheMeta(target).catch(() => undefined);
+    return cached || null;
+}
+
 export async function getCachedResourceBlob(storageKey: string) {
     const target = await cacheTarget(storageKey);
     if (!target) return null;

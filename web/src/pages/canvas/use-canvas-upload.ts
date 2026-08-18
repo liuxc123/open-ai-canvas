@@ -680,6 +680,7 @@ export function useCanvasUpload({
                     characterAliases: payload.aliases,
                     characterDefinition: payload.definition,
                     characterCoverUrl: payload.coverUrl,
+                    characterCoverStorageKey: payload.coverStorageKey,
                     characterVisualStatus: payload.visualStatus,
                     characterVoiceStatus: payload.voiceStatus,
                     characterVoiceName: payload.voiceName,

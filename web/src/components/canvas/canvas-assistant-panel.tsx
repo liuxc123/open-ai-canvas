@@ -6,6 +6,7 @@ import { motion } from "motion/react";
 
 import { modelDisplayName, modelOptionName, normalizeModelOptionValue, resolveModelChannel, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { nanoid } from "nanoid";
 import { requestToolResponse, type ResponseFunctionTool, type ResponseInputMessage, type ResponseToolCall } from "@/services/api/image";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -1042,7 +1043,14 @@ export function CanvasAssistantPanel({
                         <>
                             {messages.map((message) => (
                                 <div key={message.id} className="space-y-2">
-                                    <AgentChatMessage item={assistantMessageToChatMessage(message)} theme={theme} user={user} isStreaming={agentBusy && message.id === messages.at(-1)?.id && message.role === "assistant"} onRejectTool={rejectOnlineTool} onApproveTool={approveOnlineTool} />
+                                    <AgentChatMessage
+                                        item={assistantMessageToChatMessage(message)}
+                                        theme={theme}
+                                        user={user}
+                                        isStreaming={agentBusy && message.id === messages.at(-1)?.id && message.role === "assistant"}
+                                        onRejectTool={rejectOnlineTool}
+                                        onApproveTool={approveOnlineTool}
+                                    />
                                     {message.references?.length ? <MessageReferences message={message} /> : null}
                                 </div>
                             ))}
@@ -1349,11 +1357,12 @@ function MessageReferences({ message }: { message: CanvasAssistantMessage }) {
 function AssistantReferenceChip({ item, label, onRemove }: { item: CanvasAssistantReference; label?: string; onRemove?: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const text = (item.text || item.title).replace(/\s+/g, " ").trim().slice(0, 1) || "文";
+    const thumbUrl = useImageThumbUrl(item.type === CanvasNodeType.Image ? item.storageKey : undefined, item.dataUrl || "");
     return (
         <div className="group/chip relative inline-flex h-8 max-w-[150px] shrink-0 items-center gap-1.5 rounded-lg text-sm" style={{ color: theme.node.text }}>
-            {item.dataUrl ? (
+            {thumbUrl ? (
                 <span className="relative block size-8 shrink-0">
-                    <img src={item.dataUrl} alt="" className="size-8 rounded-lg object-cover" />
+                    <img src={thumbUrl} alt="" className="size-8 rounded-lg object-cover" />
                     {label ? <span className="absolute left-0.5 top-0.5 rounded bg-black/60 px-1 py-0.5 text-[var(--fs-micro)] font-medium leading-none text-white">{label}</span> : null}
                 </span>
             ) : (

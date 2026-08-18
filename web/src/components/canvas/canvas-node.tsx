@@ -361,6 +361,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onOpenTaskDetails={onOpenTaskDetails}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         reduceMediaEffects={reduceMediaEffects}
+                        scale={scale}
                     />
                 </div>
 

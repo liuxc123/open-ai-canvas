@@ -1,4 +1,4 @@
-import { resourceFileUrl } from "@/services/api/resources";
+import { resourceFileUrl, resourceStorageKey } from "@/services/api/resources";
 import type { ProjectAsset } from "@/services/api/projects";
 import type { CanvasNodeData } from "@/types/canvas";
 
@@ -36,6 +36,7 @@ export function refreshCanvasCharacterReferenceNodes(nodes: CanvasNodeData[], as
             characterAliases: aliases,
             characterDefinition: card.definition,
             characterCoverUrl: cover ? resourceFileUrl(cover.resourceId) : undefined,
+            characterCoverStorageKey: cover ? resourceStorageKey(cover.resourceId) : undefined,
             characterVisualStatus: card.visualStatus,
             characterVoiceStatus: card.voiceStatus,
             characterVoiceName: card.voice?.profile.name,
@@ -51,6 +52,7 @@ export function refreshCanvasCharacterReferenceNodes(nodes: CanvasNodeData[], as
             && metadata.characterVersionId === patch.characterVersionId
             && metadata.characterPrompt === patch.characterPrompt
             && metadata.characterCoverUrl === patch.characterCoverUrl
+            && metadata.characterCoverStorageKey === patch.characterCoverStorageKey
             && metadata.characterVisualStatus === patch.characterVisualStatus
             && metadata.characterVoiceStatus === patch.characterVoiceStatus
             && metadata.characterVoiceName === patch.characterVoiceName

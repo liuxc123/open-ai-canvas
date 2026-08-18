@@ -5,6 +5,7 @@ import { Dropdown, Input } from "antd";
 
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
@@ -113,12 +114,12 @@ function ProjectPreview({ project }: { project: CanvasProject }) {
         });
     const media = mediaNodes.find(({ node }) => node.type === CanvasNodeType.Image) || mediaNodes[0];
     if (media) {
-        const { node, url } = media;
+        const { node } = media;
         return (
             <div className="canvas-project-media size-full">
                 {node.type === CanvasNodeType.Video
                     ? <div className="canvas-project-video size-full"><Video className="size-8" aria-label={node.title || "项目视频"} /></div>
-                    : <img src={url} alt={node.title || "项目图片"} loading="lazy" decoding="async" className="size-full min-h-0 object-cover" />}
+                    : <ProjectCoverImage node={node} />}
             </div>
         );
     }
@@ -139,6 +140,11 @@ function ProjectPreview({ project }: { project: CanvasProject }) {
             })}
         </div>
     );
+}
+
+function ProjectCoverImage({ node }: { node: CanvasNodeData }) {
+    const url = useImageThumbUrl(node.metadata?.storageKey, getNodeMediaUrl(node));
+    return <img src={url} alt={node.title || "项目图片"} loading="lazy" decoding="async" className="size-full min-h-0 object-cover" />;
 }
 
 function getNodeMediaUrl(node: CanvasNodeData) {

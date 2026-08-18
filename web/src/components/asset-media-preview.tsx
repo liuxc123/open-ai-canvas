@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import type { Asset } from "@/stores/use-asset-store";
 
 type AssetMediaPreviewProps = {
@@ -10,6 +11,9 @@ type AssetMediaPreviewProps = {
 };
 
 export function AssetMediaPreview({ asset, alt, className = "", fallback = null }: AssetMediaPreviewProps) {
+    const imageUrl = asset ? asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "") : "";
+    const displayUrl = useImageThumbUrl(asset?.kind === "image" ? asset.data.storageKey : undefined, imageUrl);
+
     if (!asset) return fallback;
 
     if (asset.kind === "video" && asset.data.url) {
@@ -32,7 +36,6 @@ export function AssetMediaPreview({ asset, alt, className = "", fallback = null 
         );
     }
 
-    const imageUrl = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
-    if (!imageUrl) return fallback;
-    return <img src={imageUrl} alt={alt} loading="lazy" decoding="async" className={className} />;
+    if (!displayUrl) return fallback;
+    return <img src={displayUrl} alt={alt} loading="lazy" decoding="async" className={className} />;
 }

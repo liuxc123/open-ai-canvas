@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { Crosshair, FolderOpen, ImageIcon, Images, PanelLeftClose, Plus, Search, X } from "lucide-react";
 
 import { FloatingDock, type FloatingDockEntry } from "@/components/ui/aceternity/floating-dock";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasDockStyle } from "@/lib/canvas/canvas-aceternity-style";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -216,6 +217,7 @@ function TrayTabButton({ active, label, theme, onClick }: { active: boolean; lab
 function AssetTrayRow({ title, imageUrl, storageKey, icon, active = false, draggable = false, motionEnabled, onClick, onDragStart }: { title: string; imageUrl: string; storageKey?: string; icon: ReactNode; active?: boolean; draggable?: boolean; motionEnabled: boolean; onClick: () => void; onDragStart?: (event: DragEvent<HTMLElement>) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const location = resourceStorageLocation(storageKey);
+    const previewUrl = useImageThumbUrl(storageKey, imageUrl);
     return (
         <motion.button
             type="button"
@@ -229,7 +231,7 @@ function AssetTrayRow({ title, imageUrl, storageKey, icon, active = false, dragg
             onDragStartCapture={onDragStart}
         >
             <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-[var(--dock-item-radius)] border" style={{ background: theme.node.fill, borderColor: theme.toolbar.border }}>
-                {imageUrl ? <img src={imageUrl} alt="" width={36} height={36} className="size-full object-cover" draggable={false} /> : <ImageIcon className="size-3.5 opacity-55" />}
+                {previewUrl ? <img src={previewUrl} alt="" width={36} height={36} className="size-full object-cover" draggable={false} /> : <ImageIcon className="size-3.5 opacity-55" />}
             </span>
             <span className="min-w-0">
                 <span className="block truncate text-[var(--fs-tiny)] font-semibold">{title}</span>

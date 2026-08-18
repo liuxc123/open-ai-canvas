@@ -3,6 +3,7 @@ import { ArrowUp, AtSign, Boxes, ChevronDown, FileText, ImageIcon, ImagePlus, Ma
 import { Button, Image as AntImage, Modal, Popover, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { resolveCanvasGenerationModel } from "@/lib/canvas/canvas-project-generation";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
@@ -92,7 +93,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         size: mode === "video" ? config.size : undefined,
     });
     const activeReferenceCount = activeReferences.length;
-    const videoFrameOptions = mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
+    const videoFrameOptions = mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl, storageKey: item.storageKey }));
     const monochromeAccent = theme.node.activeStroke;
     const controlSurface = "var(--canvas-composer-control-surface)";
     const promptBounds = promptEditorBounds(false, activeReferenceCount > 0);
@@ -468,8 +469,13 @@ function ConnectedReferenceShelf({ references, theme, onInsert }: { references: 
     );
 }
 
+function ReferenceThumbnailImage({ reference }: { reference: CanvasResourceReference }) {
+    const url = useImageThumbUrl(reference.storageKey, reference.previewUrl || "");
+    return <img src={url} alt="" className="size-full object-cover" />;
+}
+
 function ReferenceThumbnail({ reference }: { reference: CanvasResourceReference }) {
-    if (reference.kind === "image" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-full object-cover" />;
+    if (reference.kind === "image" && reference.previewUrl) return <ReferenceThumbnailImage reference={reference} />;
     if (reference.kind === "video" && reference.previewUrl) return <video src={reference.previewUrl} className="size-full bg-black object-cover" muted preload="metadata" />;
     if (reference.kind === "character" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-full bg-black/5 object-contain" />;
 

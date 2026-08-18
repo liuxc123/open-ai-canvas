@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { ArrowLeft, ChevronRight, FileText, Folder, Image as ImageIcon, Music2, Pencil, Search, Sparkles, UserRound, Video } from "lucide-react";
 import { Popover } from "antd";
 
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { buildAssetMentionReferences, canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -731,8 +732,13 @@ function MentionReferenceList({
     ));
 }
 
+function ReferencePreviewImage({ reference }: { reference: CanvasResourceReference }) {
+    const url = useImageThumbUrl(reference.storageKey, reference.previewUrl || "");
+    return <img src={url} alt="" className="size-7 rounded-sm object-cover" />;
+}
+
 function ReferencePreview({ reference }: { reference: CanvasResourceReference }) {
-    if (reference.kind === "image" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-7 rounded-sm object-cover" />;
+    if (reference.kind === "image" && reference.previewUrl) return <ReferencePreviewImage reference={reference} />;
     if (reference.kind === "video" && reference.previewUrl)
         return (
             <span className="grid size-7 shrink-0 overflow-hidden rounded-md bg-black">

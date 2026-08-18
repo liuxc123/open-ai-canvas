@@ -218,6 +218,7 @@ export type CanvasNodeMetadata = {
     };
     characterVoiceInstructions?: string;
     characterCoverUrl?: string;
+    characterCoverStorageKey?: string;
     characterView?: "front" | "side" | "back" | "multi";
     characterViewNodeIds?: {
         front?: string;

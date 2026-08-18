@@ -2,8 +2,14 @@ import { Button, Modal } from "antd";
 import { Check, Star } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+
+function VersionImage({ node }: { node: CanvasNodeData }) {
+    const url = useImageThumbUrl(node.metadata?.storageKey, node.metadata?.content || "");
+    return <img src={url} alt={node.title || "版本图片"} className="size-full object-contain" />;
+}
 
 export function CanvasVersionCompareModal({ open, versions, onClose, onSetPrimary, onFocus }: { open: boolean; versions: CanvasNodeData[]; onClose: () => void; onSetPrimary: (nodeId: string) => void; onFocus: (nodeId: string) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -18,7 +24,7 @@ export function CanvasVersionCompareModal({ open, versions, onClose, onSetPrimar
                             {node.metadata?.versionPrimary ? <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[var(--fs-tiny)] font-medium" style={{ color: theme.accent.primary }}><Check className="size-3" />主版本</span> : null}
                         </div>
                         <button type="button" className="block h-52 w-full overflow-hidden" style={{ background: theme.node.fill }} onClick={() => onFocus(node.id)}>
-                            {node.type === CanvasNodeType.Image && node.metadata?.content ? <img src={node.metadata.content} alt={node.title || "版本图片"} className="size-full object-contain" /> : node.type === CanvasNodeType.Video && node.metadata?.content ? <video src={node.metadata.content} className="size-full object-contain" muted preload="metadata" aria-label={node.title || "版本视频"} /> : <span className="grid size-full place-items-center px-4 text-center text-xs" style={{ color: theme.node.muted }}>点击定位到画布节点</span>}
+                            {node.type === CanvasNodeType.Image && node.metadata?.content ? <VersionImage node={node} /> : node.type === CanvasNodeType.Video && node.metadata?.content ? <video src={node.metadata.content} className="size-full object-contain" muted preload="metadata" aria-label={node.title || "版本视频"} /> : <span className="grid size-full place-items-center px-4 text-center text-xs" style={{ color: theme.node.muted }}>点击定位到画布节点</span>}
                         </button>
                         <div className="space-y-2 p-3 text-[var(--fs-label)]">
                             <Info label="模型" value={node.metadata?.model || "默认模型"} />

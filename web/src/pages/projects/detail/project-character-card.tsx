@@ -2,11 +2,17 @@ import { Button, Popconfirm } from "antd";
 import { Image as ImageIcon, Pencil, Sparkles, Trash2, UserRound, Volume2 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { resourceFileUrl } from "@/services/api/resources";
+import { resourceFileUrl, resourceStorageKey } from "@/services/api/resources";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import type { ProjectAsset } from "@/services/api/projects";
 import { AssetLibraryCard, AssetLibraryCardMedia } from "@/components/assets/asset-library-card";
 
 import { textValue } from "./shared";
+
+function CharacterCoverImage({ cover, title }: { cover: { resourceId: string }, title: string }) {
+    const url = useImageThumbUrl(resourceStorageKey(cover.resourceId), resourceFileUrl(cover.resourceId));
+    return <img src={url} alt={title} loading="lazy" decoding="async" className="h-full w-full object-contain p-1" />;
+}
 
 export function ProjectCharacterCard({ asset, generating, removing, onOpen, onEdit, onGenerate, onBindImages, onBindVoice, onRemove }: {
     asset: ProjectAsset;
@@ -30,7 +36,7 @@ export function ProjectCharacterCard({ asset, generating, removing, onOpen, onEd
         <AssetLibraryCard className="project-character-card">
             <AssetLibraryCardMedia className="relative aspect-[3/2] overflow-hidden bg-foreground/[.045]">
                 <button type="button" className="project-asset-media-button" onClick={onOpen} aria-label={`查看角色卡：${asset.title}`}>
-                    {cover ? <img src={resourceFileUrl(cover.resourceId)} alt={asset.title} loading="lazy" decoding="async" className="h-full w-full object-contain p-1" /> : <div className="grid h-full place-items-center"><span className="grid size-14 place-items-center rounded-lg border border-border/70 bg-background/75 text-foreground/24"><UserRound className="size-7" /></span></div>}
+                    {cover ? <CharacterCoverImage cover={cover} title={asset.title} /> : <div className="grid h-full place-items-center"><span className="grid size-14 place-items-center rounded-lg border border-border/70 bg-background/75 text-foreground/24"><UserRound className="size-7" /></span></div>}
                 </button>
                 <div className="absolute inset-x-2 top-2 flex items-center justify-between gap-2">
                     <span className="rounded bg-black/60 px-1.5 py-0.5 text-[var(--fs-micro)] font-medium text-white">角色卡 · v{character?.version || 1}</span>

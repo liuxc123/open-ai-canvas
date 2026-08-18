@@ -4,6 +4,7 @@ import { Button, Image } from "antd";
 import { FileText, Image as ImageIcon, Music2, Pencil, Sparkles, Video, X } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { useImageThumbUrl } from "@/hooks/use-image-thumb";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { NodeGenerationInput } from "./canvas-node-generation";
@@ -58,7 +59,7 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
         () =>
             inputs
                 .filter((input) => input.type === "image" && input.image)
-                .map((input) => ({ nodeId: input.nodeId, label: resourceLabel(input, inputs), title: input.title, previewUrl: input.image?.dataUrl })),
+                .map((input) => ({ nodeId: input.nodeId, label: resourceLabel(input, inputs), title: input.title, previewUrl: input.image?.dataUrl, storageKey: input.image?.storageKey })),
         [inputs],
     );
     const candidates = useMemo(() => {
@@ -297,6 +298,11 @@ function MentionMenu({ candidates, allInputs, activeIndex, theme, onSelect }: { 
     );
 }
 
+function ComposerImagePreview({ image }: { image: NonNullable<NodeGenerationInput["image"]> }) {
+    const url = useImageThumbUrl(image.storageKey, image.dataUrl);
+    return <img src={url} alt="" className="size-9 rounded-md object-cover" />;
+}
+
 function ResourcePreview({ candidate }: { candidate: ComposerCandidate }) {
     if (candidate.kind === "skill") {
         return (
@@ -313,7 +319,7 @@ function ResourcePreview({ candidate }: { candidate: ComposerCandidate }) {
             </span>
         );
     }
-    if (input.type === "image" && input.image) return <img src={input.image.dataUrl} alt="" className="size-9 rounded-md object-cover" />;
+    if (input.type === "image" && input.image) return <ComposerImagePreview image={input.image} />;
     if (input.type === "video" && input.video) return <video src={input.video.url} className="size-9 rounded-md bg-black object-cover" muted preload="metadata" />;
     const Icon = input.type === "audio" ? Music2 : input.type === "video" ? Video : input.type === "image" ? ImageIcon : FileText;
     return (
