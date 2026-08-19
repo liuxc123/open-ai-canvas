@@ -1,0 +1,392 @@
+import { create } from "zustand";
+import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
+
+import { nanoid } from "nanoid";
+import { applyAssetDiff, ASSET_STORE_KEY, clearShardedAssetStorage, diffAssetStorage, loadAssetStorageDocument, rebaseAssetSnapshot, type AssetStorageDocument } from "@/lib/asset-storage-revision";
+import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
+import { localForageStorageForScope } from "@/lib/localforage-storage";
+import { getActiveUserScope } from "@/lib/user-scope";
+import { cleanupUnusedImages, collectImageStorageKeys, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { cleanupUnusedMedia, collectMediaStorageKeys, resolveMediaUrl } from "@/services/file-storage";
+import { flushGenerationAssetStorageLocks, insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
+import { CANVAS_STORE_KEY, commitPendingCanvasStorePersistenceLocked, pendingCanvasStorePersistence, withCanvasStorePersistenceLock } from "@/stores/canvas/use-canvas-store";
+
+export type AssetKind = "text" | "image" | "video" | "audio" | "model" | "entity";
+export type AssetCategory = "character" | "environment" | "wardrobe" | "prop" | "weapon" | "style" | "other";
+export type AssetStatus = "draft" | "review" | "confirmed" | "archived";
+export type TextAsset = AssetBase<"text"> & { data: { content: string } };
+export type ImageAsset = AssetBase<"image"> & { data: { dataUrl: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
+export type VideoAsset = AssetBase<"video"> & { data: { url: string; storageKey?: string; width: number; height: number; durationMs?: number; bytes: number; mimeType: string } };
+export type AudioAsset = AssetBase<"audio"> & { data: { url: string; storageKey?: string; durationMs?: number; bytes: number; mimeType: string } };
+export type ModelAsset = AssetBase<"model"> & { data: { url: string; storageKey?: string; bytes: number; mimeType: string; fileName: string } };
+export type EntityAsset = AssetBase<"entity"> & { data: { definition: Record<string, unknown> } };
+export type Asset = TextAsset | ImageAsset | VideoAsset | AudioAsset | ModelAsset | EntityAsset;
+export type NewAsset =
+    | Omit<TextAsset, "id" | "createdAt" | "updatedAt">
+    | Omit<ImageAsset, "id" | "createdAt" | "updatedAt">
+    | Omit<VideoAsset, "id" | "createdAt" | "updatedAt">
+    | Omit<AudioAsset, "id" | "createdAt" | "updatedAt">
+    | Omit<ModelAsset, "id" | "createdAt" | "updatedAt">
+    | Omit<EntityAsset, "id" | "createdAt" | "updatedAt">;
+
+type AssetBase<T extends AssetKind> = {
+    id: string;
+    kind: T;
+    title: string;
+    coverUrl: string;
+    tags: string[];
+    category?: AssetCategory;
+    status?: AssetStatus;
+    primaryVersionId?: string;
+    source?: string;
+    note?: string;
+    createdAt: string;
+    updatedAt: string;
+    metadata?: Record<string, unknown>;
+};
+
+type AssetStore = {
+    hydrated: boolean;
+    assets: Asset[];
+    addAsset: (asset: NewAsset) => string;
+    addGenerationAsset: (effectKey: string, asset: NewAsset, signal?: AbortSignal) => Promise<string>;
+    updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
+    removeAsset: (id: string) => void;
+    replaceAssets: (assets: Asset[]) => void;
+    cleanupImages: (extra?: unknown) => void;
+};
+
+
+type PersistedAssetState = Pick<AssetStore, "assets">;
+type ObservedAssetPersist = {
+    assets: Asset[];
+    revision: number;
+};
+
+type QueuedAssetPersist = {
+    name: string;
+    scope: string;
+    baseAssets: Asset[];
+    baseRevision: number;
+    assets: Asset[];
+    token: number;
+};
+
+let suppressAssetStorePersistence = 0;
+const assetMemoryStates = new Map<string, PersistedAssetState>();
+const observedAssetPersists = new Map<string, ObservedAssetPersist>();
+const queuedAssetPersists = new Map<string, QueuedAssetPersist>();
+const assetPersistTokens = new Map<string, number>();
+const assetOperations = new Set<Promise<unknown>>();
+const generationAssetFailures = new Map<string, unknown>();
+
+function recordAssetStorageDocument(scope: string, document: AssetStorageDocument) {
+    observedAssetPersists.set(scope, {
+        assets: document.state.assets,
+        revision: document.storageRevision,
+    });
+}
+
+function withAssetStorePersistenceSuppressed<T>(operation: () => T) {
+    suppressAssetStorePersistence += 1;
+    try {
+        return operation();
+    } finally {
+        suppressAssetStorePersistence -= 1;
+    }
+}
+
+async function commitPendingAssetStorePersistenceLocked(scope: string) {
+    let committed: AssetStorageDocument | null = null;
+
+    while (true) {
+        const queued = queuedAssetPersists.get(scope);
+        if (!queued) return committed;
+
+        const durable = await loadAssetStorageDocument(scope, queued.baseAssets);
+        const rebased = rebaseAssetSnapshot({
+            document: durable,
+            baseAssets: queued.baseAssets,
+            localAssets: queued.assets,
+            baseRevision: queued.baseRevision,
+        });
+        // 增量写入：只写变化的条目 + 更新索引
+        const diff = diffAssetStorage(durable, rebased);
+        await applyAssetDiff(scope, diff);
+        committed = rebased;
+        recordAssetStorageDocument(scope, rebased);
+
+        const latest = queuedAssetPersists.get(scope);
+        if (!latest || latest.token === queued.token) {
+            if (latest?.token === queued.token) queuedAssetPersists.delete(scope);
+            return committed;
+        }
+
+        latest.baseAssets = queued.assets;
+        latest.baseRevision = rebased.storageRevision;
+    }
+}
+
+async function writeQueuedAssetPersist(scope: string, _token: number) {
+    await withGenerationAssetStorageLock(scope, () => commitPendingAssetStorePersistenceLocked(scope));
+}
+
+async function readPersistedAssetDocumentForScope(scope: string) {
+    return loadAssetStorageDocument(scope);
+}
+
+function trackAssetOperation<T>(operation: Promise<T>) {
+    assetOperations.add(operation);
+    void operation.finally(() => assetOperations.delete(operation)).catch(() => undefined);
+    return operation;
+}
+
+function persistAssetState(name: string, value: StorageValue<AssetStore>) {
+    const scope = getActiveUserScope();
+    const nextAssets = value.state.assets;
+    const queued = queuedAssetPersists.get(scope);
+    const observed = observedAssetPersists.get(scope);
+    const baseAssets = assetMemoryStates.get(scope)?.assets ?? observed?.assets ?? [];
+    assetMemoryStates.set(scope, { assets: nextAssets });
+    if (suppressAssetStorePersistence) return;
+
+    const token = (assetPersistTokens.get(scope) ?? 0) + 1;
+    assetPersistTokens.set(scope, token);
+    queuedAssetPersists.set(scope, {
+        name,
+        scope,
+        baseAssets: queued?.baseAssets ?? baseAssets,
+        baseRevision: queued?.baseRevision ?? observed?.revision ?? 0,
+        assets: nextAssets,
+        token,
+    });
+    return trackAssetOperation(writeQueuedAssetPersist(scope, token));
+}
+
+function generationAssetFailureKey(scope: string, effectKey: string) {
+    return `${scope}\0${effectKey}`;
+}
+
+function trackGenerationAssetOperation<T>(scope: string, effectKey: string, operation: Promise<T>) {
+    const failureKey = generationAssetFailureKey(scope, effectKey);
+    return trackAssetOperation(
+        operation.then(
+            (value) => {
+                generationAssetFailures.delete(failureKey);
+                return value;
+            },
+            (error) => {
+                throw error;
+            },
+        ),
+    );
+}
+
+export async function flushAssetStorePersistence() {
+    while (true) {
+        if (assetOperations.size) {
+            await Promise.all([...assetOperations]);
+            continue;
+        }
+
+        const writes = [...queuedAssetPersists.values()].map(({ scope, token }) => writeQueuedAssetPersist(scope, token));
+        if (writes.length) {
+            await Promise.all(writes);
+            continue;
+        }
+
+        await flushGenerationAssetStorageLocks();
+        if (!assetOperations.size && !queuedAssetPersists.size) break;
+    }
+
+    const failure = generationAssetFailures.values().next();
+    if (!failure.done) throw failure.value;
+}
+
+const assetStorage: PersistStorage<AssetStore> = {
+    getItem: async (name) => {
+        const scope = getActiveUserScope();
+        const document = await loadAssetStorageDocument(scope);
+        if (document.state.assets.length === 0 && document.storageRevision === 0) {
+            assetMemoryStates.set(scope, { assets: [] });
+            observedAssetPersists.set(scope, { assets: [], revision: 0 });
+            return null;
+        }
+        const assets = await Promise.all(
+            document.state.assets.map(async (asset) => {
+                // 视频和音频的数据结构不同，分别缩窄以保持 Asset 判别联合关系。
+                if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
+                if (asset.kind === "audio" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
+                if (asset.kind === "model" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
+                if (asset.kind !== "image") return asset;
+                if (asset.data.storageKey)
+                    return {
+                        ...asset,
+                        coverUrl: asset.coverUrl.startsWith("blob:") ? await resolveImageUrl(asset.data.storageKey, asset.coverUrl) : asset.coverUrl,
+                        data: { ...asset.data, dataUrl: await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl) },
+                    };
+                if (!asset.data.dataUrl.startsWith("data:image/")) return asset;
+                const image = await uploadImage(asset.data.dataUrl);
+                return { ...asset, coverUrl: asset.coverUrl.startsWith("data:image/") ? image.url : asset.coverUrl, data: { ...asset.data, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, mimeType: image.mimeType } };
+            }),
+        );
+        const hydratedDocument = { ...document, state: { assets } };
+        assetMemoryStates.set(scope, { assets });
+        recordAssetStorageDocument(scope, hydratedDocument);
+        return hydratedDocument as unknown as StorageValue<AssetStore>;
+    },
+    setItem: persistAssetState,
+    removeItem: async (name) => {
+        const scope = getActiveUserScope();
+        await clearShardedAssetStorage(scope);
+    },
+};
+
+async function generationAssetId(effectKey: string) {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKey));
+    return `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export const useAssetStore = create<AssetStore>()(
+    persist(
+        (set, get) => ({
+            hydrated: false,
+            assets: [],
+            addAsset: (asset) => {
+                const now = new Date().toISOString();
+                const id = nanoid();
+                set((state) => ({ assets: [{ ...asset, id, createdAt: now, updatedAt: now } as Asset, ...state.assets] }));
+                return id;
+            },
+            addGenerationAsset: (effectKey, asset, signal) => {
+                const scope = getActiveUserScope();
+                const publicationBase = observedAssetPersists.get(scope) ?? { assets: get().assets, revision: 0 };
+                return trackGenerationAssetOperation(
+                    scope,
+                    effectKey,
+                    (async () => {
+                        const id = await generationAssetId(effectKey);
+                        let persistedDocument: AssetStorageDocument | null = null;
+                        return insertOrReturnGenerationAsset<Asset>({
+                            storageScope: scope,
+                            effectKey,
+                            assetId: id,
+                            createAsset: () => {
+                                const now = new Date().toISOString();
+                                return {
+                                    ...asset,
+                                    id,
+                                    createdAt: now,
+                                    updatedAt: now,
+                                    metadata: { ...asset.metadata, generationEffectKey: effectKey },
+                                } as Asset;
+                            },
+                            updateAssets: (updater) => {
+                                withAssetStorePersistenceSuppressed(() => {
+                                    set((state) => {
+                                        if (!persistedDocument) return { assets: updater(state.assets) };
+                                        const liveDocument = rebaseAssetSnapshot({
+                                            document: persistedDocument,
+                                            baseAssets: publicationBase.assets,
+                                            localAssets: state.assets,
+                                            baseRevision: publicationBase.revision,
+                                        });
+                                        const generationAssets = updater(persistedDocument.state.assets);
+                                        const published = rebaseAssetSnapshot({
+                                            document: liveDocument,
+                                            baseAssets: persistedDocument.state.assets,
+                                            localAssets: generationAssets,
+                                            baseRevision: persistedDocument.storageRevision,
+                                        });
+                                        return { assets: published.state.assets };
+                                    });
+                                });
+                            },
+                            readAssets: () => get().assets,
+                            readPersistedAssets: async () => {
+                                try {
+                                    await commitPendingAssetStorePersistenceLocked(scope);
+                                    persistedDocument = await readPersistedAssetDocumentForScope(scope);
+                                    recordAssetStorageDocument(scope, persistedDocument);
+                                    return persistedDocument.state.assets;
+                                } catch (error) {
+                                    generationAssetFailures.set(generationAssetFailureKey(scope, effectKey), error);
+                                    throw error;
+                                }
+                            },
+                            isAssetDeleted: () => Boolean(persistedDocument?.tombstones.assets[id]),
+                            requireCrossRealmLock: true,
+                            signal,
+                            persistAssets: async (assets) => {
+                                const durable = persistedDocument ?? (await readPersistedAssetDocumentForScope(scope));
+                                const nextDocument: AssetStorageDocument = {
+                                    ...durable,
+                                    state: { assets },
+                                    storageRevision: durable.storageRevision + 1,
+                                };
+                                try {
+                                    const diff = diffAssetStorage(durable, nextDocument);
+                                    await applyAssetDiff(scope, diff);
+                                } catch (error) {
+                                    generationAssetFailures.set(generationAssetFailureKey(scope, effectKey), error);
+                                    throw error;
+                                }
+                                persistedDocument = nextDocument;
+                                recordAssetStorageDocument(scope, nextDocument);
+                            },
+                        });
+                    })(),
+                );
+            },
+            updateAsset: (id, patch) =>
+                set((state) => ({
+                    assets: state.assets.map((asset) => (asset.id === id ? ({ ...asset, ...patch, updatedAt: new Date().toISOString() } as Asset) : asset)),
+                })),
+            removeAsset: (id) =>
+                set((state) => {
+                    const assets = state.assets.filter((asset) => asset.id !== id);
+                    get().cleanupImages({ assets });
+                    return { assets };
+                }),
+            replaceAssets: (assets) => set({ assets }),
+            cleanupImages: (extra) => {
+                const scope = getActiveUserScope();
+                const frozenExtraImageKeys = collectImageStorageKeys(extra);
+                const frozenExtraMediaKeys = collectMediaStorageKeys(extra);
+                window.setTimeout(async () => {
+                    await withGenerationArtifactCommitLock(scope, async () => {
+                        // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
+                        const canvasProjects = await withCanvasStorePersistenceLock(scope, async () => {
+                            await commitPendingCanvasStorePersistenceLocked(scope);
+                            const durableCanvas = parseCanvasStorageDocument(await localForageStorageForScope(scope).getItem(CANVAS_STORE_KEY));
+                            return pendingCanvasStorePersistence(scope)?.projects ?? durableCanvas.state.projects;
+                        });
+                        await withGenerationAssetStorageLock(scope, async () => {
+                            await commitPendingAssetStorePersistenceLocked(scope);
+                            const durableAssets = (await readPersistedAssetDocumentForScope(scope)).state.assets;
+                            const references = { projects: canvasProjects, assets: durableAssets };
+                            const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
+                            const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
+                            await cleanupUnusedImages(
+                                [...imageKeys].map((storageKey) => ({ storageKey })),
+                                scope,
+                            );
+                            await cleanupUnusedMedia(
+                                [...mediaKeys].map((storageKey) => ({ storageKey })),
+                                scope,
+                            );
+                        });
+                    });
+                }, 0);
+            },
+        }),
+        {
+            name: ASSET_STORE_KEY,
+            storage: assetStorage,
+            partialize: (state) => ({ assets: state.assets }) as StorageValue<AssetStore>["state"],
+            onRehydrateStorage: () => () => {
+                useAssetStore.setState({ hydrated: true });
+            },
+        },
+    ),
+);
