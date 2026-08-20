@@ -69,7 +69,7 @@ services:
       HOME: /tmp
       GOCACHE: /tmp/go-build
       GOMODCACHE: /tmp/go-mod
-      CANVAS_BACKEND_ADDR: ':8080'
+      CANVAS_BACKEND_ADDR: ':${CANVAS_BACKEND_PORT}'
       CANVAS_BACKEND_DATA_DIR: /data
       CANVAS_DATABASE_DRIVER: postgres
       DATABASE_URL: ${DATABASE_URL:-}
@@ -104,7 +104,7 @@ services:
         bind:
           create_host_path: true
     ports:
-      - '${CANVAS_BACKEND_HOST_PORT:-8080}:8080'
+      - '${CANVAS_BACKEND_HOST_PORT:?必须在 .env 中配置 CANVAS_BACKEND_HOST_PORT}:${CANVAS_BACKEND_PORT:?必须在 .env 中配置 CANVAS_BACKEND_PORT}'
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,9 +118,14 @@ services:
     container_name: open-ai-canvas-web
     image: oven/bun:1.3.13
     working_dir: /workspace/web
-    command: ['sh', '-c', 'bun install --frozen-lockfile && bun run dev']
+    command:
+      [
+        'sh',
+        '-c',
+        'bun install --frozen-lockfile && bun run dev -- --port ${CANVAS_WEB_PORT}',
+      ]
     environment:
-      VITE_API_PROXY_TARGET: http://backend:8080
+      VITE_API_PROXY_TARGET: http://backend:${CANVAS_BACKEND_PORT}
       VITE_TLDRAW_LICENSE_KEY: ${VITE_TLDRAW_LICENSE_KEY:-}
     volumes:
       # 源码 bind-mount，git pull 后 Vite HMR 自动检测变更并热更新
@@ -130,7 +135,7 @@ services:
       - web-node-modules:/workspace/web/node_modules
       - web-bun-cache:/root/.bun/install/cache
     ports:
-      - '${CANVAS_HTTP_PORT:-3000}:3000'
+      - '${CANVAS_HTTP_PORT:?必须在 .env 中配置 CANVAS_HTTP_PORT}:${CANVAS_WEB_PORT:?必须在 .env 中配置 CANVAS_WEB_PORT}'
     depends_on:
       - backend
     restart: unless-stopped
