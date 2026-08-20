@@ -1,8 +1,8 @@
-import { dirname, resolve } from "node:path";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import {dirname, resolve} from "node:path";
+import {readFileSync} from "node:fs";
+import {fileURLToPath} from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import {defineConfig} from "vite";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
 const appVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim();
@@ -25,6 +25,7 @@ export default defineConfig({
         },
     },
     server: {
+        allowedHosts: ["wh-narrative-canvas.hnheshi.top", "narrative-canvas.hnheshi.top"],
         proxy: {
             "/api": {
                 target: apiProxyTarget,
