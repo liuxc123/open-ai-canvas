@@ -6,7 +6,7 @@ ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=$GOPROXY
 
 ARG ALPINE_MIRROR
-RUN if [ -n "$ALPINE_MIRROR" ]; then \
+RUN if [ -n "https://mirrors.ustc.edu.cn/alpine" ]; then \
       sed -i "s#https://dl-cdn.alpinelinux.org/alpine#https://mirrors.ustc.edu.cn/alpine#g" /etc/apk/repositories; \
     fi \
     && apk add --no-cache build-base
