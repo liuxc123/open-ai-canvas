@@ -1,57 +1,15 @@
-name: open-ai-canvas
-
 services:
-  postgres:
-    container_name: open-ai-canvas-postgres
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-open_ai_canvas}
-      POSTGRES_USER: ${POSTGRES_USER:-open_ai_canvas}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须在 .env 中配置 POSTGRES_PASSWORD}
-    volumes:
-      - ${CANVAS_POSTGRES_DATA_PATH:-./data/postgres}:/var/lib/postgresql/data
-    ports:
-      - '${POSTGRES_HOST_PORT:-5432}:5432'
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    restart: unless-stopped
-
-  redis:
-    container_name: open-ai-canvas-redis
-    image: redis:7.4-alpine
-    command: ['redis-server', '--appendonly', 'yes', '--appendfsync', 'everysec']
-    volumes:
-      - ${CANVAS_REDIS_DATA_PATH:-./data/redis}:/data
-    ports:
-      - '${REDIS_HOST_PORT:-6379}:6379'
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    restart: unless-stopped
-
   backend:
-    container_name: open-ai-canvas-backend
+    image: open-ai-canvas-backend:local
     build:
       context: .
       dockerfile: backend/Dockerfile
       args:
-        GO_IMAGE: ${GO_IMAGE:-golang:1.25-alpine}
-        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
-        ALPINE_MIRROR: ${ALPINE_MIRROR:-}
-    working_dir: /workspace/backend
-    user: '${LOCAL_UID:-1000}:${LOCAL_GID:-1000}'
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     environment:
-      HOME: /tmp
-      GOCACHE: /tmp/open-ai-canvas-air/go-build
-      GOMODCACHE: /tmp/open-ai-canvas-air/go-mod
-      CANVAS_BACKEND_ADDR: ':${CANVAS_BACKEND_PORT}'
+      CANVAS_BACKEND_ADDR: ":8080"
       CANVAS_BACKEND_DATA_DIR: /data
-      CANVAS_DATABASE_DRIVER: postgres
+      CANVAS_DATABASE_DRIVER: ${CANVAS_DATABASE_DRIVER:-sqlite}
       DATABASE_URL: ${DATABASE_URL:-}
       REDIS_URL: ${REDIS_URL:-}
       CANVAS_WORKER_CONCURRENCY: ${CANVAS_WORKER_CONCURRENCY:-3}
@@ -59,54 +17,23 @@ services:
       CANVAS_REGISTRATION_ENABLED: ${CANVAS_REGISTRATION_ENABLED:-false}
       CANVAS_ALLOW_PRIVATE_UPSTREAMS: ${CANVAS_ALLOW_PRIVATE_UPSTREAMS:-false}
       CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS:-}
-      CANVAS_CORS_ORIGINS: ${CANVAS_CORS_ORIGINS:-https://wh-narrative-canvas.hnheshi.top}
+      CANVAS_CORS_ORIGINS: ${CANVAS_CORS_ORIGINS:-http://localhost:3000}
       GIN_MODE: release
     volumes:
-      - type: bind
-        source: .
-        target: /workspace
-      - type: bind
-        source: ${CANVAS_DATA_PATH:-./data/backend}
-        target: /data
-        bind:
-          create_host_path: true
-    ports:
-      - '${CANVAS_BACKEND_HOST_PORT:?必须在 .env 中配置 CANVAS_BACKEND_HOST_PORT}:${CANVAS_BACKEND_PORT:?必须在 .env 中配置 CANVAS_BACKEND_PORT}'
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - backend-data:/data
     restart: unless-stopped
-    init: true
 
   web:
-    container_name: open-ai-canvas-web
-    image: oven/bun:1.3.13
-    working_dir: /workspace/web
-    command:
-      [
-        'sh',
-        '-c',
-        'bun install --frozen-lockfile && bun run dev -- --port ${CANVAS_WEB_PORT}',
-      ]
-    environment:
-      VITE_API_PROXY_TARGET: http://backend:${CANVAS_BACKEND_PORT}
-      VITE_TLDRAW_LICENSE_KEY: ${VITE_TLDRAW_LICENSE_KEY:-}
-      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: wh-narrative-canvas.hnheshi.top
-    volumes:
-      - type: bind
-        source: .
-        target: /workspace
-      - web-node-modules:/workspace/web/node_modules
-      - web-bun-cache:/root/.bun/install/cache
+    image: open-ai-canvas-web:local
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - '${CANVAS_HTTP_PORT:?必须在 .env 中配置 CANVAS_HTTP_PORT}:${CANVAS_WEB_PORT:?必须在 .env 中配置 CANVAS_WEB_PORT}'
+      - "3000:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
-    init: true
 
 volumes:
-  web-node-modules:
-  web-bun-cache:
+  backend-data:
