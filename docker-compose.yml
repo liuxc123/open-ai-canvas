@@ -62,7 +62,7 @@ services:
       args:
         GO_IMAGE: ${GO_IMAGE:-golang:1.25-alpine}
         GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
-        ALPINE_MIRROR: ${ALPINE_MIRROR:-}
+        ALPINE_MIRROR: ${ALPINE_MIRROR:-https://mirrors.cloud.tencent.com}
     working_dir: /workspace/backend
     user: '${LOCAL_UID:-1000}:${LOCAL_GID:-1000}'
     environment:
