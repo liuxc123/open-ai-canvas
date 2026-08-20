@@ -7,7 +7,7 @@ ENV GOPROXY=$GOPROXY
 
 ARG ALPINE_MIRROR
 RUN if [ -n "$ALPINE_MIRROR" ]; then \
-      sed -i "s#https://dl-cdn.alpinelinux.org#${ALPINE_MIRROR}#g" /etc/apk/repositories; \
+      sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR}#g" /etc/apk/repositories; \
     fi \
     && apk add --no-cache build-base
 
