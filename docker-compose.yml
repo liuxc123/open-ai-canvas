@@ -67,8 +67,8 @@ services:
     user: '${LOCAL_UID:-1000}:${LOCAL_GID:-1000}'
     environment:
       HOME: /tmp
-      GOCACHE: /tmp/go-build
-      GOMODCACHE: /tmp/go-mod
+      GOCACHE: /tmp/open-ai-canvas-air/go-build
+      GOMODCACHE: /tmp/open-ai-canvas-air/go-mod
       CANVAS_BACKEND_ADDR: ':${CANVAS_BACKEND_PORT}'
       CANVAS_BACKEND_DATA_DIR: /data
       CANVAS_DATABASE_DRIVER: postgres
@@ -90,17 +90,6 @@ services:
       - type: bind
         source: ${CANVAS_DATA_PATH:-./data/backend}
         target: /data
-        bind:
-          create_host_path: true
-      # 持久化 Go 编译缓存，容器重建后继续复用
-      - type: bind
-        source: ./.local/cache/go-build
-        target: /tmp/go-build
-        bind:
-          create_host_path: true
-      - type: bind
-        source: ./.local/cache/go-mod
-        target: /tmp/go-mod
         bind:
           create_host_path: true
     ports:
