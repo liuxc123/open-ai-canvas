@@ -35,5 +35,5 @@ COPY --from=backend-build /out/migrate-sqlite-postgres /usr/local/bin/migrate-sq
 
 USER app
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -qO- "http://127.0.0.1:${CANVAS_BACKEND_ADDR#:}/api/health" >/dev/null || exit 1
 CMD ["infinite-canvas-backend"]

@@ -64,7 +64,7 @@ services:
       HOME: /tmp
       GOCACHE: /tmp/go-build
       GOMODCACHE: /tmp/go-mod
-      CANVAS_BACKEND_ADDR: ':8080'
+      CANVAS_BACKEND_ADDR: ':${CANVAS_BACKEND_PORT:-8080}'
       CANVAS_BACKEND_DATA_DIR: /data
       CANVAS_DATABASE_DRIVER: postgres
       DATABASE_URL: ${DATABASE_URL:-}
@@ -98,7 +98,7 @@ services:
         bind:
           create_host_path: true
     ports:
-      - '127.0.0.1:${CANVAS_BACKEND_HOST_PORT:-8080}:8080'
+      - '127.0.0.1:${CANVAS_BACKEND_HOST_PORT:-8080}:${CANVAS_BACKEND_PORT:-8080}'
     depends_on:
       postgres:
         condition: service_healthy
@@ -112,7 +112,7 @@ services:
     working_dir: /workspace/web
     command: ['sh', '-c', 'bun install --frozen-lockfile && bun run dev']
     environment:
-      VITE_API_PROXY_TARGET: http://backend:8080
+      VITE_API_PROXY_TARGET: http://backend:${CANVAS_BACKEND_PORT:-8080}
       VITE_TLDRAW_LICENSE_KEY: ${VITE_TLDRAW_LICENSE_KEY:-}
     volumes:
       - type: bind
@@ -121,7 +121,7 @@ services:
       - web-node-modules:/workspace/web/node_modules
       - web-bun-cache:/root/.bun/install/cache
     ports:
-      - '${CANVAS_HTTP_PORT:-3000}:3000'
+      - '${CANVAS_HTTP_PORT:-3000}:${CANVAS_WEB_PORT:-3000}'
     depends_on:
       - backend
     init: true

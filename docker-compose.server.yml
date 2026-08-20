@@ -37,7 +37,7 @@ services:
       args:
         GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
     environment:
-      CANVAS_BACKEND_ADDR: ":8080"
+      CANVAS_BACKEND_ADDR: ':${CANVAS_BACKEND_PORT:?必须在 .env 中配置 CANVAS_BACKEND_PORT}'
       CANVAS_BACKEND_DATA_DIR: /data
       CANVAS_DATABASE_DRIVER: ${CANVAS_DATABASE_DRIVER:-postgres}
       DATABASE_URL: ${DATABASE_URL:-}
@@ -64,8 +64,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    environment:
+      # nginx 模板渲染变量：监听端口 / 后端上游端口
+      CANVAS_WEB_PORT: ${CANVAS_WEB_PORT:?必须在 .env 中配置 CANVAS_WEB_PORT}
+      CANVAS_BACKEND_PORT: ${CANVAS_BACKEND_PORT:?必须在 .env 中配置 CANVAS_BACKEND_PORT}
+      # 仅替换 CANVAS_ 前缀变量，避免误伤 nginx 自身的 $host、$scheme 等运行时变量
+      NGINX_ENVSUBST_FILTER: ^CANVAS_
     ports:
-      - "127.0.0.1:5173:3000"
+      - '${CANVAS_HTTP_PORT:?必须在 .env 中配置 CANVAS_HTTP_PORT}:${CANVAS_WEB_PORT}'
     depends_on:
       backend:
         condition: service_healthy

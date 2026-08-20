@@ -124,6 +124,95 @@ curl -fsSL https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/main/script
 
 部署配置和 PostgreSQL 密码保存在 `/opt/open-ai-canvas/.env`，不要发送给他人，也不要删除 `backend-data`、`postgres-data` 和 `redis-data` 数据卷。数据卷持久化不等于备份，请定期备份 PostgreSQL 和上传文件。直接使用 IP 访问仅适合首次配置；公网长期使用必须绑定域名并配置 HTTPS。
 
+### 在已有代码仓库的服务器上部署（`docker-compose.server.yml`）
+
+适用于服务器上已经 clone 了本仓库（或自己的 fork），希望直接从当前代码构建镜像并自行管理部署的场景。它与上面的一键脚本相互独立：不会自动安装 Docker，也不会自动生成 `.env`，环境需要自己准备。
+
+#### 前置条件
+
+- Linux 服务器，已安装 Docker 与 Docker Compose v2（`docker compose version` 可用）。
+- 已把仓库 clone 到服务器，例如 `/opt/open-ai-canvas`。
+
+#### 准备 `.env`
+
+在仓库根目录创建 `.env`（文件权限建议 `chmod 600 .env`）。`docker-compose.server.yml` 会读取以下变量，其中 PostgreSQL 密码、`DATABASE_URL` 和三个端口变量是必填项，缺失时 Compose 会直接报错：
+
+```bash
+cd /opt/open-ai-canvas
+
+# 生成随机数据库密码
+POSTGRES_PASSWORD=$(openssl rand -hex 32)
+
+cat > .env <<EOF
+POSTGRES_DB=open_ai_canvas
+POSTGRES_USER=open_ai_canvas
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+DATABASE_URL=postgresql://open_ai_canvas:${POSTGRES_PASSWORD}@postgres:5432/open_ai_canvas?sslmode=disable
+# 对外访问端口 : 网页容器内 Nginx 监听端口
+CANVAS_HTTP_PORT=3000
+CANVAS_WEB_PORT=3000
+# 后端在 Compose 内网监听的端口，Nginx 反向代理的上游
+CANVAS_BACKEND_PORT=8080
+EOF
+
+chmod 600 .env
+```
+
+说明：
+
+- 后端默认使用 PostgreSQL（`CANVAS_DATABASE_DRIVER` 缺省值为 `postgres`），此时 `DATABASE_URL` 必填；连接串中的主机名固定为 `postgres`（Compose 服务名）。
+- `CANVAS_WEB_PORT` 和 `CANVAS_BACKEND_PORT` 在镜像启动时通过 Nginx 模板渲染注入配置，两者需要与 `.env` 保持一致；只有 `CANVAS_HTTP_PORT` 会暴露到宿主机。
+- 可选变量：`CANVAS_DATA_PATH`（上传文件目录，默认 `./data`）、`CANVAS_POSTGRES_DATA_PATH`（默认 `./postgres-data`）、`CANVAS_REDIS_DATA_PATH`（默认 `./redis-data`）、`CANVAS_CORS_ORIGINS`、`GOPROXY`（构建时的 Go 模块代理，默认国内源）等，完整列表见 `docker-compose.server.yml`。
+
+#### 首次部署
+
+```bash
+cd /opt/open-ai-canvas
+docker compose -f docker-compose.server.yml --env-file .env build
+docker compose -f docker-compose.server.yml --env-file .env up -d --remove-orphans --wait
+```
+
+`--wait` 会等待 PostgreSQL、Redis 和后端的健康检查全部通过后才返回。首次构建需要下载依赖并编译前后端，耗时较长；完成后访问 `http://服务器IP:${CANVAS_HTTP_PORT}`，第一个注册的账号自动成为管理员。
+
+#### 更新版本
+
+```bash
+cd /opt/open-ai-canvas
+
+# 1. 拉取新代码（建议先确认工作区干净）
+git pull --ff-only origin main
+
+# 2. 重新构建前后端镜像（会复用 Docker 构建缓存）
+docker compose -f docker-compose.server.yml --env-file .env build backend web
+
+# 3. 滚动到新镜像并等待健康检查通过
+docker compose -f docker-compose.server.yml --env-file .env up -d --remove-orphans --wait
+```
+
+注意：
+
+- 更新会重建 `backend` 和 `web` 容器，期间服务中断几秒到几十秒；`postgres`、`redis` 和数据目录不受影响。
+- 更新前建议备份数据（见下文）。如需回滚代码，`git checkout` 到上一个提交后重复上面的构建步骤即可。
+- `.env` 中只需要改配置时，直接编辑后执行 `up -d` 使其生效，无需重新构建镜像。
+
+#### 常用运维命令
+
+```bash
+cd /opt/open-ai-canvas
+# 查看容器状态与健康检查
+docker compose -f docker-compose.server.yml --env-file .env ps
+# 跟踪日志
+docker compose -f docker-compose.server.yml --env-file .env logs -f --tail=200
+# 备份数据库
+docker compose -f docker-compose.server.yml --env-file .env exec postgres \
+  pg_dump -U open_ai_canvas open_ai_canvas > backup-$(date +%F).sql
+# 停止 / 启动全部服务
+docker compose -f docker-compose.server.yml --env-file .env down
+docker compose -f docker-compose.server.yml --env-file .env up -d --wait
+```
+
+`down` 不会删除 `postgres-data`、`redis-data` 和 `./data` 数据目录；`down -v` 也只会删除 Compose 命名卷，这三个目录是宿主机路径挂载，但同样请勿手动删除。公网长期使用前请按后文配置 HTTPS。
+
 ## 生产环境文本 SSE
 
 文本任务事件流是登录态接口 `GET /api/tasks/:id/text-events`。它只发送当前用户有权限访问的文本任务增量，响应类型为 `text/event-stream`；事件 `delta` 的 `id` 是单调递增的文本序号，`terminal` 表示任务已经成功、失败或取消。生产反向代理必须对这一条路径关闭响应缓冲和缓存，并允许长时间读取；不要把这些设置复制到所有 `/api/` 请求上。
