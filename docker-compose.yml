@@ -6,6 +6,7 @@ services:
       dockerfile: backend/Dockerfile
       args:
         GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    user: '${LOCAL_UID:-1000}:${LOCAL_GID:-1000}'
     environment:
       CANVAS_BACKEND_ADDR: ':${CANVAS_BACKEND_PORT:?必须在 .env 中配置 CANVAS_BACKEND_PORT}'
       CANVAS_BACKEND_DATA_DIR: /data
@@ -27,7 +28,7 @@ services:
     image: open-ai-canvas-web:local
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: web/Dockerfile
     environment:
       # nginx 模板渲染变量：监听端口 / 后端上游端口
       CANVAS_WEB_PORT: ${CANVAS_WEB_PORT:?必须在 .env 中配置 CANVAS_WEB_PORT}

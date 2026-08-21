@@ -28,6 +28,7 @@ services:
 
   backend:
     image: ghcr.io/ddcat-ai/open-ai-canvas-backend:${CANVAS_IMAGE_TAG:-latest}
+    user: '${LOCAL_UID:-1000}:${LOCAL_GID:-1000}'
     environment:
       CANVAS_BACKEND_ADDR: ":8080"
       CANVAS_BACKEND_DATA_DIR: /data

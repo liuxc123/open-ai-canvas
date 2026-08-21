@@ -6,6 +6,7 @@ services:
       dockerfile: backend/Dockerfile
       args:
         GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+    user: '${LOCAL_UID:-1000}:${LOCAL_GID:-1000}'
     environment:
       CANVAS_BACKEND_ADDR: ':${CANVAS_BACKEND_PORT:?必须在 .env 中配置 CANVAS_BACKEND_PORT}'
       CANVAS_BACKEND_DATA_DIR: /data
