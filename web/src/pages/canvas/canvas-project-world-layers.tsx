@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
+import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { Link2 } from "lucide-react";
 
 import { ConnectionPath } from "@/components/canvas/canvas-connections";
@@ -7,7 +7,7 @@ import { CanvasNode } from "@/components/canvas/canvas-node";
 import type { CanvasBatchConnectionPreview } from "@/lib/canvas/canvas-batch-connection";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
-import type { CanvasDisplayConnection, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "@/types/canvas";
+import type { CanvasDisplayConnection, CanvasFolderStyle, CanvasFolderTheme, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "@/types/canvas";
 
 type DragPreview = { x: number; y: number; nodeIds: Set<string> } | null;
 type NodeBounds = { left: number; top: number; width: number; height: number; count: number } | null;
@@ -25,6 +25,7 @@ type CanvasProjectWorldLayersProps = {
     nodeById: Map<string, CanvasNodeData>;
     visibleNodes: CanvasNodeData[];
     frameChildrenById: Map<string, CanvasNodeData[]>;
+    linkedFolderPreviewNodesById: Map<string, CanvasNodeData[]>;
     dragPreview: DragPreview;
     selectedNodeIds: Set<string>;
     frameDropTargetId: string | null;
@@ -54,6 +55,8 @@ type CanvasProjectWorldLayersProps = {
     onConnectStart: (event: ReactPointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string, anchorRatio?: number) => void;
     onNodeResize: (nodeId: string, width: number, height: number, position?: Position) => void;
     onToggleFrame: (nodeId: string) => void;
+    onFolderStyleChange: (nodeId: string, style: CanvasFolderStyle) => void;
+    onFolderThemeChange: (nodeId: string, theme: CanvasFolderTheme) => void;
     onNodeTitleChange: (nodeId: string, title: string) => void;
     onNodeContextMenu: (event: ReactMouseEvent, nodeId: string) => void;
     onNodeContentChange: (nodeId: string, content: string) => void;
@@ -74,8 +77,15 @@ type CanvasProjectWorldLayersProps = {
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];
 const EMPTY_CANVAS_NODES: CanvasNodeData[] = [];
 
-export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
+export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
     const { viewportScale } = props;
+    const framePreviewNodes = (node: CanvasNodeData) => {
+        const assetFolderId = node.metadata?.folder?.assetFolderId;
+        if (assetFolderId) return props.linkedFolderPreviewNodesById.get(assetFolderId) || EMPTY_CANVAS_NODES;
+        const localChildren = props.frameChildrenById.get(node.id) || EMPTY_CANVAS_NODES;
+        if (localChildren.length) return localChildren;
+        return EMPTY_CANVAS_NODES;
+    };
     return (
         <>
             <svg
@@ -105,13 +115,15 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         key={node.id}
                         data={node}
                         dragOffset={props.dragPreview?.nodeIds.has(node.id) ? props.dragPreview : undefined}
-                        childNodes={props.frameChildrenById.get(node.id) || EMPTY_CANVAS_NODES}
+                        childNodes={framePreviewNodes(node)}
                         scale={viewportScale}
                         isSelected={props.selectedNodeIds.has(node.id)}
                         isDropTarget={props.frameDropTargetId === node.id}
                         onMouseDown={props.onNodeMouseDown}
                         onResize={props.onNodeResize}
                         onToggleCollapsed={props.onToggleFrame}
+                        onFolderStyleChange={props.onFolderStyleChange}
+                        onFolderThemeChange={props.onFolderThemeChange}
                         onTitleChange={props.onNodeTitleChange}
                         onContextMenu={props.onNodeContextMenu}
                     />
@@ -125,7 +137,6 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         isRelated={props.relatedNodeIds.has(node.id)}
                         isFocusRelated={props.activeNodeId === node.id}
                         isConnectionTarget={props.connectionTargetNodeId === node.id || props.batchConnectionPreview?.targetNodeId === node.id}
-                        isConnecting={Boolean(props.connectingParams || props.batchConnectionPreview)}
                         forceInputVisible={Boolean(props.batchConnectionPreview)}
                         batchCount={props.batchChildCountById.get(node.id) || 0}
                         batchExpanded={Boolean(node.metadata?.imageBatchExpanded)}
@@ -135,7 +146,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         batchPrimary={Boolean(node.metadata?.batchRootId && props.nodeById.get(node.metadata.batchRootId)?.metadata?.primaryImageId === node.id)}
                         batchMotion={props.batchMotionById.get(node.id)}
                         showImageInfo={props.showImageInfo}
-                        reduceMediaEffects={props.reduceMediaEffects || props.isNodeDragging || props.mediaEffectsDisabledNodeId === node.id}
+                        reduceMediaEffects={props.reduceMediaEffects || props.mediaEffectsDisabledNodeId === node.id}
                         resourceLabel={props.resourceReferenceByNodeId.get(node.id)}
                         mentionReferences={props.mentionReferencesByNodeId.get(node.id) || EMPTY_RESOURCE_REFERENCES}
                         renderNodeContent={props.renderCanvasNodeContent}
@@ -186,7 +197,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
             ) : null}
         </>
     );
-}
+});
 
 function BatchConnectionHandle({ scale, count, active, onPointerDown }: { scale: number; count: number; active: boolean; onPointerDown: (event: ReactPointerEvent) => void }) {
     const inverseScale = 1 / Math.max(scale, 0.05);

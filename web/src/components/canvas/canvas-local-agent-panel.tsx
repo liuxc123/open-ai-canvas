@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { App, Button, Segmented, Tooltip } from "antd";
 import copyToClipboard from "copy-to-clipboard";
 import { Copy, FolderOpen, History, LoaderCircle, MessageSquareText, PlugZap, Plus, RefreshCw, RotateCcw, Terminal, Trash2 } from "lucide-react";
@@ -10,8 +10,21 @@ import { createClientId } from "@/lib/client-id";
 import { getLocalRuntimeSessionClient, useLocalRuntimeStore } from "@/stores/use-local-runtime-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { useCanvasAgentStore, type AgentAttachment, type AgentChatItem, type AgentEventLog, type AgentPanelTab, type AgentPendingToolCall, type AgentThreadSummary } from "@/stores/canvas/use-canvas-agent-store";
+import {
+    canvasAgentConnectionStatusText,
+    canvasAgentConnectionStartingPatch,
+    canvasAgentTransientDisconnectPatch,
+    useCanvasAgentStore,
+    type AgentAttachment,
+    type AgentChatItem,
+    type AgentEventLog,
+    type AgentPanelTab,
+    type AgentPendingToolCall,
+    type AgentThreadSummary,
+} from "@/stores/canvas/use-canvas-agent-store";
 import { previewCanvasAgentOps, summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import { buildCanvasResourceReferences } from "@/lib/canvas/canvas-resource-references";
+import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { isProjectAgentReadTool, isProjectAgentToolName, runProjectAgentTool } from "@/services/api/project-agent-tools";
 import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentPendingToolCard, AgentWorkingMessage, type CanvasAgentChatAttachment } from "./canvas-agent-chat-ui";
 import { VoiceRecordingButton } from "@/components/conversation/voice-recording-button";
@@ -92,6 +105,22 @@ export const CanvasLocalAgentPanel = memo(function CanvasLocalAgentPanel({
     } = useCanvasAgentStore();
     const [resizing, setResizing] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
+    // 供 Agent 输入框「@」插入的画布节点引用候选（active 标记为可用，供「@」菜单列出），与「/」弹出的已加入技能候选
+    const composerReferences = useMemo(() => buildCanvasResourceReferences(snapshot.nodes, snapshot.connections).map((item) => ({ ...item, active: true })), [snapshot]);
+    const [composerSkills, setComposerSkills] = useState<Skill[]>([]);
+    useEffect(() => {
+        let cancelled = false;
+        listAddedSkills()
+            .then((result) => {
+                if (!cancelled) setComposerSkills(result?.skills ?? []);
+            })
+            .catch(() => {
+                // 技能列表加载失败只影响「/」菜单，不影响输入主功能
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
     const snapshotRef = useRef(snapshot);
     const confirmToolsRef = useRef(confirmTools);
     const pendingToolRef = useRef<AgentPendingToolCall | null>(null);
@@ -236,7 +265,7 @@ export const CanvasLocalAgentPanel = memo(function CanvasLocalAgentPanel({
                     }
                     errorLoggedRef.current = true;
                     connectedRef.current = false;
-                    clearAgentSession({ activity: wasConnected ? "正在重连" : "连接失败", connected: false, connectError: text });
+                    setAgentState(canvasAgentTransientDisconnectPatch(wasConnected ? "正在重连" : "连接失败", text));
                     await waitForCanvasRuntimeReconnect(controller.signal);
                 }
             }
@@ -402,28 +431,15 @@ export const CanvasLocalAgentPanel = memo(function CanvasLocalAgentPanel({
         if (connected) syncState(clientIdRef.current, restored);
     };
 
-    const toggleAgentConnection = async () => {
+    const toggleAgentConnection = () => {
         if (enabled) {
             connectionControllerRef.current?.abort();
-            clearAgentSession({ enabled: false, connected: false, activity: "离线", connectError: "" });
+            pendingToolRef.current = null;
+            setAgentState({ enabled: false, connected: false, activity: "离线", connectError: "", waiting: false, sending: false, pendingTool: null });
             return;
         }
-        const controller = new AbortController();
-        connectionControllerRef.current = controller;
-        setAgentState({ connected: false, activity: "连接中", connectError: "", activeTab: "setup" });
-        try {
-            await prepareCanvasRuntimeConnection(useLocalRuntimeStore, controller.signal);
-            if (controller.signal.aborted) return;
-            errorLoggedRef.current = false;
-            setAgentState({ enabled: true, connected: false, activity: "连接中", connectError: "", activeTab: "setup" });
-        } catch (error) {
-            if (controller.signal.aborted) return;
-            const text = error instanceof Error ? error.message : "本机 Runtime 连接失败";
-            setAgentState({ connectError: text });
-            if (!headless) message.warning(text);
-        } finally {
-            if (connectionControllerRef.current === controller) connectionControllerRef.current = null;
-        }
+        errorLoggedRef.current = false;
+        setAgentState(canvasAgentConnectionStartingPatch());
     };
 
     useEffect(() => {
@@ -431,21 +447,6 @@ export const CanvasLocalAgentPanel = memo(function CanvasLocalAgentPanel({
         autoConnectRef.current = true;
         void toggleAgentConnection();
     }, [autoConnect, connected, enabled]);
-
-    function clearAgentSession(patch: Parameters<typeof setAgentState>[0] = {}) {
-        setAgentState({
-            messages: [],
-            threads: [],
-            activeThreadId: "",
-            workspacePath: "",
-            loadingThreads: false,
-            waiting: false,
-            sending: false,
-            pendingTool: null,
-            ...patch,
-        });
-        pendingToolRef.current = null;
-    }
 
     const startNewThread = async () => {
         const projectId = snapshotRef.current.projectId;
@@ -654,6 +655,9 @@ export const CanvasLocalAgentPanel = memo(function CanvasLocalAgentPanel({
                         sending={sending || waiting}
                         placeholder="询问 Codex，或让它操作画布"
                         theme={theme}
+                        references={composerReferences}
+                        slashSkills={composerSkills}
+                        includeAssetLibrary
                         onPromptChange={(prompt) => setAgentState({ prompt })}
                         onSubmit={sendPrompt}
                         onAddFiles={addAttachments}
@@ -786,8 +790,8 @@ function AgentConnectView({
     connectError: string;
     onToggleEnabled: () => void;
 }) {
-    const statusText = connectError ? "连接失败" : connected ? activity : enabled ? "连接中" : "未连接";
-    const statusColor = connectError ? "#dc2626" : connected ? "#16a34a" : enabled ? "#d97706" : theme.node.muted;
+    const statusText = canvasAgentConnectionStatusText({ enabled, connected, activity, connectError });
+    const statusColor = statusText === "连接失败" ? "#dc2626" : connected ? "#16a34a" : enabled ? "#d97706" : theme.node.muted;
     return (
         <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
             <div className="space-y-4">

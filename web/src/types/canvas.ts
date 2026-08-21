@@ -29,6 +29,8 @@ export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
 export type CanvasMediaPerformanceMode = "auto" | "quality" | "performance";
 export type CanvasWorkspaceMode = "simple" | "professional";
 export type CanvasToolMode = "move" | "box-select";
+export type CanvasFolderStyle = "glass" | "stacked" | "midnight" | "paper" | "cinema" | "compact";
+export type CanvasFolderTheme = "aurora" | "obsidian" | "ember" | "pearl";
 export type StoryboardShotDuration = "auto" | "5" | "10" | "15" | "30";
 export type StoryboardShotCount = "auto" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10";
 export type StoryboardVideoInputMode = "direct" | "keyframe";
@@ -142,7 +144,26 @@ export type CanvasSkillSnapshot = {
 };
 
 export type CanvasNodeMetadata = {
+    importSource?:
+        | {
+              provider: "libtv";
+              projectUuid: string;
+              nodeKey: string;
+              batchId: string;
+              sourceType?: string;
+              styleAssetUuid?: string;
+              styleVersionUuid?: string;
+              styleName?: string;
+          }
+        | {
+              provider: "tapnow";
+              shareId: string;
+              nodeId: string;
+              batchId: string;
+              sourceType?: string;
+          };
     content?: string;
+    previewContent?: string;
     richText?: Record<string, unknown>;
     composerContent?: string;
     prompt?: string;
@@ -161,6 +182,7 @@ export type CanvasNodeMetadata = {
     quality?: string;
     transparentBackground?: string;
     count?: number;
+    textCount?: number;
     seconds?: string;
     vquality?: string;
     generateAudio?: string;
@@ -283,6 +305,15 @@ export type CanvasNodeMetadata = {
         collapsed: boolean;
         expandedWidth: number;
         expandedHeight: number;
+    };
+    folder?: {
+        style: CanvasFolderStyle;
+        theme?: CanvasFolderTheme;
+        createdAt: string;
+        // 自定义主题资源覆盖预置主题；目录内容永远从 childNodes 读取。
+        themeCover?: string;
+        assetFolderId?: string;
+        projectId?: string;
     };
     drawingId?: string;
     drawingEngine?: "tldraw" | "excalidraw";

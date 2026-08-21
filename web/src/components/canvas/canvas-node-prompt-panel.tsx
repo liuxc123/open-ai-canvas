@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ArrowUp, AtSign, Boxes, ChevronDown, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Pencil, SlidersHorizontal, Square, UserRound, Video } from "lucide-react";
-import { Button, Image as AntImage, Modal, Popover, Tooltip } from "antd";
+import { Button, Image as AntImage, InputNumber, Modal, Popover, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { useImageThumbUrl } from "@/hooks/use-image-thumb";
@@ -9,7 +9,7 @@ import { resolveCanvasGenerationModel } from "@/lib/canvas/canvas-project-genera
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
-import { resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
+import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, defaultImageParamsForModel, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -78,7 +78,20 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             characterCount: activeReferences.filter((item) => item.kind === "character").length,
         },
         videoOperation: node.metadata?.videoEditOperation,
-        videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds,
+        videoSeconds: mode === "video" ? node.metadata?.seconds || globalConfig.videoSeconds : undefined,
+        options: modelRequestOptions({
+            ...globalConfig,
+            size: node.metadata?.size || globalConfig.size,
+            quality: node.metadata?.quality || globalConfig.quality,
+            count: String(node.metadata?.count || globalConfig.count),
+            videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds,
+            vquality: node.metadata?.vquality || globalConfig.vquality,
+            videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio,
+            videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark,
+            audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice,
+            audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat,
+            audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed,
+        }, mode),
     };
     const config = buildNodeConfig(globalConfig, node, mode, requirements);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
@@ -246,7 +259,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         fullWidth
                         config={config}
                         value={config.model}
-                        onChange={(model) => onConfigChange(node.id, { model })}
+                        onChange={(model) => onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model })}
                         capability={mode}
                         requirements={requirements}
                         onMissingConfig={() => navigateToSettings({ continueCreation: true })}
@@ -256,7 +269,19 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     />
                 </div>
                 <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
-                    {mode === "image" ? (
+                    {mode === "text" ? (
+                        <Tooltip title={`文本生成份数（默认 1，可在生成配置中调整）`}>
+                            <InputNumber
+                                size="small"
+                                min={1}
+                                max={15}
+                                value={Math.max(1, Math.min(15, Math.floor(Math.abs(Number(node.metadata?.textCount) || 1))))}
+                                onChange={(value) => onConfigChange(node.id, { textCount: Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value)) || 1))) })}
+                                aria-label="文本生成份数"
+                                className="!w-14 !h-7 [&_.ant-input-number-input]:!text-[var(--fs-tiny)]"
+                            />
+                        </Tooltip>
+                    ) : mode === "image" ? (
                         <CanvasImageSettingsPopover
                             config={config}
                             placement={expanded ? "topRight" : "topLeft"}
@@ -573,22 +598,51 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
     const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel;
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const preferredModel = resolveCanvasGenerationModel(globalConfig, node.metadata?.model, mode) || resolveCanvasGenerationModel(globalConfig, defaultModel, mode) || fallbackModel;
-    const model = resolveCompatibleModel(globalConfig, preferredModel, requirements) || preferredModel;
+    const model = resolveCompatibleModel(globalConfig, preferredModel, mode === "image" ? { ...requirements, imageSize: node.metadata?.size || globalConfig.size || defaultConfig.size } : requirements) || preferredModel;
+    const defaults = resolveModelGenerationDefaults(
+        globalConfig,
+        model,
+        mode === "image" ? "image" : mode === "video" ? "video" : undefined,
+        mode === "image"
+            ? {
+                  size: node.metadata?.size,
+                  quality: node.metadata?.quality,
+                  transparentBackground: node.metadata?.transparentBackground,
+                  count: String(node.metadata?.count || globalConfig.canvasImageCount || globalConfig.count || defaultConfig.count),
+              }
+            : {
+                  size: node.metadata?.size,
+                  videoSeconds: node.metadata?.seconds,
+                  vquality: node.metadata?.vquality,
+                  videoGenerateAudio: node.metadata?.generateAudio,
+                  videoWatermark: node.metadata?.watermark,
+              },
+        {
+            size: globalConfig.size || defaultConfig.size,
+            quality: globalConfig.quality || defaultConfig.quality,
+            transparentBackground: globalConfig.transparentBackground || defaultConfig.transparentBackground,
+            count: String(globalConfig.canvasImageCount || globalConfig.count || defaultConfig.count),
+            videoSeconds: globalConfig.videoSeconds || defaultConfig.videoSeconds,
+            vquality: globalConfig.vquality || defaultConfig.vquality,
+            videoGenerateAudio: globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
+            videoWatermark: globalConfig.videoWatermark || defaultConfig.videoWatermark,
+        },
+    );
     return {
         ...globalConfig,
         model,
-        quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
-        size: node.metadata?.size || globalConfig.size || defaultConfig.size,
-        transparentBackground: (node.metadata?.transparentBackground || globalConfig.transparentBackground) === "true" ? "true" : "false",
-        videoSeconds: normalizeVideoDuration(node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds),
-        vquality: normalizeVideoResolution(node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality),
-        videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
-        videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
+        quality: defaults.quality || globalConfig.quality || defaultConfig.quality,
+        size: defaults.size || globalConfig.size || defaultConfig.size,
+        transparentBackground: defaults.transparentBackground || "false",
+        videoSeconds: defaults.videoSeconds || normalizeVideoDuration(globalConfig.videoSeconds || defaultConfig.videoSeconds),
+        vquality: defaults.vquality || normalizeVideoResolution(globalConfig.vquality || defaultConfig.vquality),
+        videoGenerateAudio: defaults.videoGenerateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
+        videoWatermark: defaults.videoWatermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
-        count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
+        count: defaults.count || String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -12,9 +13,34 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 const testReferenceImageDataURL = "data:image/png;base64,aGVsbG8="
+const testGeminiReferenceImageDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+func TestProviderRequestErrorDetails(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code string
+		text string
+	}{
+		{name: "cancelled", err: context.Canceled, code: "request_cancelled", text: "任务取消，中断上游请求"},
+		{name: "timeout", err: context.DeadlineExceeded, code: "upstream_timeout", text: "等待上游响应超时"},
+		{name: "network error", err: errors.New("dial tcp: connection refused"), text: "dial tcp: connection refused"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, text := providerRequestErrorDetails(tt.err)
+			if code != tt.code || text != tt.text {
+				t.Fatalf("providerRequestErrorDetails() = (%q, %q), want (%q, %q)", code, text, tt.code, tt.text)
+			}
+		})
+	}
+}
 
 func TestWriteMediaPartSanitizesFilenameAndSetsMimeType(t *testing.T) {
 	var body bytes.Buffer
@@ -78,6 +104,102 @@ data: [DONE]
 `)
 	if got, err := parseTextEventStream(chat, "chat-completion"); err != nil || got != "第一镜：远景" {
 		t.Fatalf("Chat stream = %q, err = %v", got, err)
+	}
+}
+
+func TestParseAgentToolPayloadSupportsChatCompletions(t *testing.T) {
+	result, err := parseAgentToolPayload(map[string]interface{}{
+		"choices": []interface{}{map[string]interface{}{
+			"message": map[string]interface{}{
+				"content": "准备读取画布",
+				"tool_calls": []interface{}{map[string]interface{}{
+					"id":       "call-1",
+					"function": map[string]interface{}{"name": "canvas_get_state", "arguments": `{}`},
+				}},
+			},
+		}},
+	}, "chat-completion")
+	if err != nil {
+		t.Fatalf("parseAgentToolPayload() error = %v", err)
+	}
+	if result["text"] != "准备读取画布" {
+		t.Fatalf("text = %v", result["text"])
+	}
+	calls, _ := result["toolCalls"].([]interface{})
+	if len(calls) != 1 {
+		t.Fatalf("toolCalls = %#v", result["toolCalls"])
+	}
+	call, _ := calls[0].(map[string]interface{})
+	function, _ := call["function"].(map[string]interface{})
+	if call["id"] != "call-1" || function["name"] != "canvas_get_state" || function["arguments"] != `{}` {
+		t.Fatalf("tool call = %#v", call)
+	}
+}
+
+func TestParseAgentToolPayloadSupportsResponses(t *testing.T) {
+	result, err := parseAgentToolPayload(map[string]interface{}{
+		"output": []interface{}{
+			map[string]interface{}{"type": "reasoning", "summary": []interface{}{map[string]interface{}{"type": "summary_text", "text": "先读取画布，再决定操作"}}},
+			map[string]interface{}{"type": "message", "content": []interface{}{map[string]interface{}{"type": "output_text", "text": "开始操作"}}},
+			map[string]interface{}{"type": "function_call", "call_id": "call-2", "name": "canvas_apply_ops", "arguments": `{"ops":[]}`},
+		},
+	}, "responses")
+	if err != nil {
+		t.Fatalf("parseAgentToolPayload() error = %v", err)
+	}
+	if result["text"] != "开始操作" {
+		t.Fatalf("text = %v", result["text"])
+	}
+	if result["reasoning"] != "先读取画布，再决定操作" {
+		t.Fatalf("reasoning = %v", result["reasoning"])
+	}
+	calls, _ := result["toolCalls"].([]interface{})
+	if len(calls) != 1 {
+		t.Fatalf("toolCalls = %#v", result["toolCalls"])
+	}
+	call, _ := calls[0].(map[string]interface{})
+	function, _ := call["function"].(map[string]interface{})
+	if call["id"] != "call-2" || function["name"] != "canvas_apply_ops" || function["arguments"] != `{"ops":[]}` {
+		t.Fatalf("tool call = %#v", call)
+	}
+}
+
+func TestRunAgentToolTaskFallsBackToolChoice(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var choices []interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		choice, exists := body["tool_choice"]
+		if exists {
+			choices = append(choices, choice)
+		} else {
+			choices = append(choices, nil)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if len(choices) < 3 {
+			_, _ = w.Write([]byte(`{"error":{"message":"tool_choice is incompatible with thinking mode"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"完成","tool_calls":[]}}]}`))
+	}))
+	defer server.Close()
+
+	config := providerConfig{BaseURL: server.URL, APIKey: "key", Model: "thinking-model", AllowLocalChannel: true}
+	result, err := runAgentToolTask(withProviderOutboundPolicy(context.Background(), config), canvasGenerationInput{
+		Config:        config,
+		AgentRequests: &agentToolRequests{ChatCompletion: map[string]interface{}{"messages": []interface{}{}, "tool_choice": "required"}},
+	})
+	if err != nil {
+		t.Fatalf("runAgentToolTask() error = %v", err)
+	}
+	if result["text"] != "完成" {
+		t.Fatalf("text = %v", result["text"])
+	}
+	if len(choices) != 3 || choices[0] != "required" || choices[1] != "auto" || choices[2] != nil {
+		t.Fatalf("tool choices = %#v", choices)
 	}
 }
 
@@ -154,6 +276,9 @@ func TestVolcengineArkImageBodyUsesJSONReferencesAndDownscalesSize(t *testing.T)
 	if watermark, ok := body["watermark"].(bool); !ok || watermark {
 		t.Fatalf("watermark = %#v, want false", body["watermark"])
 	}
+	if responseFormat, _ := body["response_format"].(string); responseFormat != "b64_json" {
+		t.Fatalf("response_format = %#v, want b64_json", body["response_format"])
+	}
 	size, _ := body["size"].(string)
 	parts := strings.Split(size, "x")
 	if len(parts) != 2 {
@@ -229,6 +354,86 @@ func TestVolcengineArkImageRejectsMaskBeforeRequest(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "不支持蒙版") {
 		t.Fatalf("runImageTask() error = %v", err)
+	}
+}
+
+func TestRunGeminiImageTaskUsesInlineDataAndImageConfig(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1beta/models/gemini-test:generateContent" {
+			t.Errorf("path = %q, want /v1beta/models/gemini-test:generateContent", r.URL.Path)
+		}
+		if got := r.Header.Get("x-goog-api-key"); got != "test-key" {
+			t.Errorf("x-goog-api-key = %q, want test-key", got)
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		contents, ok := body["contents"].([]interface{})
+		if !ok || len(contents) != 1 {
+			t.Fatalf("contents = %#v", body["contents"])
+		}
+		content, _ := contents[0].(map[string]interface{})
+		parts, ok := content["parts"].([]interface{})
+		if !ok || len(parts) != 2 {
+			t.Fatalf("parts = %#v", content["parts"])
+		}
+		textPart, _ := parts[0].(map[string]interface{})
+		if textPart["text"] != "edit this image" {
+			t.Errorf("text part = %#v", textPart)
+		}
+		imagePart, _ := parts[1].(map[string]interface{})
+		inlineData, _ := imagePart["inlineData"].(map[string]interface{})
+		if inlineData["mimeType"] != "image/png" || inlineData["data"] != "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" {
+			t.Errorf("inlineData = %#v", inlineData)
+		}
+		generationConfig, _ := body["generationConfig"].(map[string]interface{})
+		modalities, _ := generationConfig["responseModalities"].([]interface{})
+		if !reflect.DeepEqual(modalities, []interface{}{"TEXT", "IMAGE"}) {
+			t.Errorf("responseModalities = %#v", modalities)
+		}
+		imageConfig, _ := generationConfig["imageConfig"].(map[string]interface{})
+		if imageConfig["aspectRatio"] != "16:9" || imageConfig["imageSize"] != "4K" {
+			t.Errorf("imageConfig = %#v", imageConfig)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}]}}]}`))
+	}))
+	defer server.Close()
+
+	result, err := runImageTask(context.Background(), canvasGenerationInput{
+		Prompt:          "edit this image",
+		Config:          providerConfig{BaseURL: server.URL, APIKey: "test-key", APIFormat: "gemini", Model: "gemini-test", InterfaceType: "gemini-image", Size: "16:9", Quality: "high"},
+		ReferenceImages: []providerMedia{{DataURL: testGeminiReferenceImageDataURL}},
+	})
+	if err != nil {
+		t.Fatalf("runImageTask() error = %v", err)
+	}
+	images, _ := result["images"].([]map[string]string)
+	if len(images) != 1 || images[0]["dataUrl"] != testReferenceImageDataURL {
+		t.Fatalf("images = %#v", result["images"])
+	}
+}
+
+func TestRunGeminiImageTaskRejectsInvalidReferenceBeforeRequest(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		http.Error(w, "unexpected upstream request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	_, err := runImageTask(context.Background(), canvasGenerationInput{
+		Prompt:          "edit this image",
+		Config:          providerConfig{BaseURL: server.URL, APIKey: "test-key", APIFormat: "gemini", Model: "gemini-test", InterfaceType: "gemini-image"},
+		ReferenceImages: []providerMedia{{DataURL: "data:text/plain;base64,aGVsbG8="}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "读取 Gemini Images 参考图失败") || !strings.Contains(err.Error(), "MIME 类型无效") {
+		t.Fatalf("runImageTask() error = %v", err)
+	}
+	if called {
+		t.Fatal("invalid reference image must be rejected before upstream request")
 	}
 }
 
@@ -1306,6 +1511,59 @@ func TestRunNewAPIChannel2VideoTaskDownloadsTemporaryResult(t *testing.T) {
 	}
 }
 
+func TestRunNewAPIChannel2VideoTaskResumesOriginalProviderTaskWithoutAnotherPost(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	paths := make([]string, 0, 2)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/video/generations/existing-provider-task":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":"success","data":{"task_id":"existing-provider-task","status":"SUCCESS","result_url":"` + server.URL + `/video.mp4"}}`))
+		case "GET /video.mp4":
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("video"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	input := canvasGenerationInput{
+		Mode:   "video",
+		Config: providerConfig{BaseURL: server.URL, APIKey: "test-key", Model: "video-model", InterfaceType: string(model.ChannelInterfaceNewAPIChannel2)},
+	}
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := withProviderAnalytics(context.Background(), nil, model.Task{
+		ID: "task-1", Type: "canvas_video", ProviderRequestID: "existing-provider-task", InputJSON: string(inputJSON),
+	})
+	result, err := runNewAPIChannel2VideoTask(ctx, input)
+	if err != nil {
+		t.Fatalf("runNewAPIChannel2VideoTask() error = %v", err)
+	}
+	if result["video"] == nil {
+		t.Fatalf("result = %#v", result)
+	}
+	want := "GET /v1/video/generations/existing-provider-task,GET /video.mp4"
+	if got := strings.Join(paths, ","); got != want {
+		t.Fatalf("paths = %q, want %q", got, want)
+	}
+}
+
+func TestRunNewAPIChannel2VideoTaskReturnsTypedDeadlineWhenPollingWindowEnds(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	ctx = withProviderAnalytics(ctx, nil, model.Task{ID: "task-1", Type: "canvas_video", ProviderRequestID: "existing-provider-task"})
+	_, err := runNewAPIChannel2VideoTask(ctx, canvasGenerationInput{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runNewAPIChannel2VideoTask() error = %v, want context deadline exceeded", err)
+	}
+}
+
 func TestRunGeminiVeoVideoTaskUsesLongRunningOperation(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	paths := make([]string, 0, 3)
@@ -1536,6 +1794,43 @@ func TestResolveGenerationStyleExecutionSkipsPromptAssetForOtherModel(t *testing
 	}
 }
 
+func TestApplyGenerationStyleProfileRebuildsStaleClientPlanForResolvedModel(t *testing.T) {
+	enabled := true
+	profile := styleProfileDocument{
+		SchemaVersion:   1,
+		PresetID:        "style-1",
+		Title:           "项目画风",
+		Prompt:          "base style",
+		ExecutionPolicy: "compatible-fallback",
+		Source:          "user",
+		Revision:        1,
+		Assets: []styleProfileAsset{{
+			ID: "template-1", Kind: "template", Title: "旧模型模板", Provider: "workflow", Enabled: &enabled, Status: "validated",
+			BaseModels: []string{"client-model"}, PromptFragment: "client-only fragment",
+		}},
+	}
+	clientPrompt, clientStatus, _ := resolveGenerationStyleExecution(profile, "client-model", "openai-image")
+	input := canvasGenerationInput{
+		Mode:   "image",
+		Prompt: "portrait\n\n【项目画风执行规范】\n" + clientPrompt,
+		Config: providerConfig{Model: "resolved-model", InterfaceType: "openai-image"},
+		Metadata: map[string]interface{}{
+			"styleProfileJson": mustStyleProfileJSON(profile),
+			"styleExecutionPlan": styleExecutionPlanDocument{
+				SchemaVersion: 1, ProfilePresetID: profile.PresetID, ProfileRevision: profile.Revision, Mode: "image",
+				Model: "client-model", InterfaceType: "openai-image", Status: clientStatus, Prompt: clientPrompt,
+			},
+		},
+	}
+
+	if err := (&Service{}).applyGenerationStyleProfile("user-1", "", &input); err != nil {
+		t.Fatalf("applyGenerationStyleProfile() error = %v", err)
+	}
+	if input.Prompt != "portrait\n\n【项目画风执行规范】\nbase style" {
+		t.Fatalf("applyGenerationStyleProfile() prompt = %q", input.Prompt)
+	}
+}
+
 func TestEquivalentStyleProfileJSONIgnoresObjectKeyOrder(t *testing.T) {
 	equal, err := equivalentStyleProfileJSON(`{"schemaVersion":1,"presetId":"style-1","assets":[]}`, `{"assets":[],"presetId":"style-1","schemaVersion":1}`)
 	if err != nil || !equal {
@@ -1620,5 +1915,80 @@ func TestRunNovitaVideoTaskReturnsFailureReason(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "content violates policy") {
 		t.Fatalf("runVideoTask() error = %v, want reason in message", err)
+	}
+}
+
+func TestRunMiniMaxVideoTaskCreatesPollsAndDownloads(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	paths := make([]string, 0, 3)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v2/video_generation":
+			if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+				t.Errorf("Authorization = %q", got)
+			}
+			var body miniMaxVideoRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if body.Model != "MiniMax-H3" || body.Resolution != "768P" || body.Duration != 5 || body.Ratio != "16:9" || len(body.Content) != 1 || body.Content[0].Text != "make it move" {
+				t.Errorf("body = %#v", body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task_id":"minimax-task-1"}`))
+		case "GET /v2/query/video_generation/minimax-task-1":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task":{"id":"minimax-task-1","status":"succeeded","content":{"url":"` + server.URL + `/video.mp4"}}}`))
+		case "GET /video.mp4":
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("video"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := runVideoTask(context.Background(), canvasGenerationInput{
+		Mode:   "video",
+		Prompt: "make it move",
+		Config: providerConfig{BaseURL: server.URL, APIKey: "test-key", Model: "MiniMax-H3", InterfaceType: "minimax-video", VideoSeconds: "5", VQuality: "720", Size: "16:9"},
+	})
+	if err != nil {
+		t.Fatalf("runVideoTask() error = %v", err)
+	}
+	video := result["video"].(map[string]interface{})
+	if video["dataUrl"] != "data:video/mp4;base64,dmlkZW8=" {
+		t.Fatalf("video = %#v", video)
+	}
+	if got := strings.Join(paths, ","); got != "POST /v2/video_generation,GET /v2/query/video_generation/minimax-task-1,GET /video.mp4" {
+		t.Fatalf("paths = %q", got)
+	}
+}
+
+func TestRunMiniMaxVideoTaskReturnsFailureReason(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v2/video_generation":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task_id":"minimax-task-2"}`))
+		case "GET /v2/query/video_generation/minimax-task-2":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task":{"status":"failed","error":{"code":"1026","message":"content violates policy"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := runVideoTask(context.Background(), canvasGenerationInput{
+		Mode:   "video",
+		Prompt: "make it move",
+		Config: providerConfig{BaseURL: server.URL, APIKey: "test-key", Model: "MiniMax-H3", InterfaceType: "minimax-video"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "1026：content violates policy") {
+		t.Fatalf("runVideoTask() error = %v", err)
 	}
 }
