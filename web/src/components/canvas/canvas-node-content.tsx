@@ -7,6 +7,7 @@ import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskSt
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
 import { IMAGE_MICRO_LONG_EDGE, IMAGE_THUMB_LONG_EDGE, imageNodeDetailTier, imageNodeDisplayLongEdge, type ImageDetailTier } from "@/lib/canvas/canvas-image-lod";
+import { buildLibTVImagePreviewUrl } from "@/lib/canvas/libtv-import";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -568,6 +569,7 @@ function ImageContent({
     const imageContainerRef = useRef<HTMLDivElement>(null);
     const nearViewport = useNearViewport(imageContainerRef);
     const { url, loading } = useImageNodeResourceUrl(node, { near: nearViewport, scale, preferThumb: Boolean(reduceMediaEffects) });
+    const importedFromLibTV = node.metadata?.importSource?.provider === "libtv";
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} theme={theme} onToggleBatch={onToggleBatch}>
             <div ref={imageContainerRef} className="h-full w-full overflow-hidden rounded-[var(--node-radius)]">
@@ -575,7 +577,7 @@ function ImageContent({
                     <img
                         src={url}
                         alt={node.title}
-                        loading="lazy"
+                        loading={importedFromLibTV ? "eager" : "lazy"}
                         decoding="async"
                         draggable={false}
                         onDragStart={(event) => event.preventDefault()}
@@ -733,7 +735,9 @@ function DeferredMediaLoad({ icon, label, disabled, onClick }: { icon: ReactNode
 
 function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
     const storageKey = node.metadata?.storageKey || "";
-    const fallback = node.metadata?.content || "";
+    const content = node.metadata?.content || "";
+    const fallback = node.metadata?.previewContent
+        || (node.type === CanvasNodeType.Image && node.metadata?.importSource?.provider === "libtv" ? buildLibTVImagePreviewUrl(content) : content);
     const isRemoteResource = Boolean(resourceIdFromStorageKey(storageKey));
     const [url, setUrl] = useState(isRemoteResource ? "" : fallback);
     const [loading, setLoading] = useState(isRemoteResource && eager);

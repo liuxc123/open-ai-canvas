@@ -1,4 +1,4 @@
-import { App, Button, DatePicker, Input, Modal, Select, Table, Tag } from "antd";
+import { App, Button, DatePicker, Input, Modal, Select } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import { Download, Eye, Play, Search } from "lucide-react";
@@ -6,12 +6,12 @@ import { saveAs } from "file-saver";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
-import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
+import { PaginationBar } from "@/components/layout/workspace-page";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { exportAdminApiLogs, listAdminApiLogs, type ApiCallLog } from "@/services/api/auth";
 import { ApiLogDetailDrawer } from "../components/api-log-detail-drawer";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminBatchBar, AdminExportButton, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
+import { AdminBatchBar, AdminDataTable, AdminExportButton, AdminFilterChip, AdminStatusBadge, AdminTableEmpty } from "../components/admin-ui";
 
 export default function LogsPage() {
     const { message } = App.useApp();
@@ -109,51 +109,8 @@ export default function LogsPage() {
                 ),
         },
         { title: "耗时", dataIndex: "durationMs", width: 112, render: (value) => <span className="tabular-nums">{formatDuration(value)}</span> },
-        {
-            title: "计费",
-            width: 130,
-            render: (_, log) =>
-                log.costAvailable ? (
-                    <div>
-                        <div className="tabular-nums">{formatCost(log)}</div>
-                        <div className="text-xs text-foreground/40">估算费用</div>
-                    </div>
-                ) : (
-                    <span className="text-foreground/35">未配置</span>
-                ),
-        },
-        {
-            title: "Tokens",
-            width: 166,
-            render: (_, log) =>
-                log.usageAvailable ? (
-                    <div className="space-y-0.5 text-xs tabular-nums">
-                        <div>
-                            <span className="text-foreground/40">输入</span> {log.inputTokens.toLocaleString()}
-                        </div>
-                        <div>
-                            <span className="text-foreground/40">输出</span> {log.outputTokens.toLocaleString()}
-                        </div>
-                        {log.cachedTokens > 0 ? (
-                            <div>
-                                <span className="text-foreground/40">缓存</span> {log.cachedTokens.toLocaleString()}
-                            </div>
-                        ) : null}
-                    </div>
-                ) : (
-                    <span className="text-foreground/35">未返回</span>
-                ),
-        },
-        {
-            title: "操作",
-            width: 90,
-            fixed: "right",
-            render: (_, log) => (
-                <Button size="small" icon={<Eye className="size-3.5" />} onClick={() => setDetailLogId(log.id)}>
-                    详情
-                </Button>
-            ),
-        },
+        { title: "计费", width: 130, render: (_, log) => log.costAvailable ? <div><div className="tabular-nums">{formatCost(log)}</div><div className="text-xs text-foreground/40">估算费用</div></div> : <span className="text-foreground/35">未配置</span> },
+        { title: "Tokens", width: 166, render: (_, log) => log.usageAvailable ? <div className="space-y-0.5 text-xs tabular-nums"><div><span className="text-foreground/40">输入</span> {log.inputTokens.toLocaleString()}</div><div><span className="text-foreground/40">输出</span> {log.outputTokens.toLocaleString()}</div>{log.cachedTokens > 0 ? <div><span className="text-foreground/40">缓存</span> {log.cachedTokens.toLocaleString()}</div> : null}</div> : <span className="text-foreground/35">未返回</span> },
     ];
 
     return (
@@ -170,98 +127,35 @@ export default function LogsPage() {
                 />
             }
         >
-            <ListToolbar
-                active={hasFilters}
+            <AdminDataTable
+                toolbar={<Input allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索用户、渠道、模型、路径或请求号" onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)} />}
+                toolbarActiveFilters={<>{keyword ? <AdminFilterChip label={`搜索：${keyword}`} onRemove={() => updateUrl({ filter: "", page: 1 })} /> : null}{status !== "all" ? <AdminFilterChip label={`结果：${status === "succeeded" ? "成功" : "失败"}`} onRemove={() => updateUrl({ status: "all", page: 1 })} /> : null}{!isDefaultRange && fromParam && toParam ? <AdminFilterChip label={`时间：${fromParam} ~ ${toParam}`} onRemove={() => { setDateRange([dayjs().subtract(6, "day"), dayjs()]); updateUrl({ from: null, to: null, page: 1 }); }} /> : null}</>}
+                toolbarFilters={<>
+                    <DatePicker.RangePicker
+                        allowClear
+                        value={[dateRange[0], dateRange[1]]}
+                        onChange={(value) => {
+                            const next: [Dayjs | null, Dayjs | null] = value ? [value[0], value[1]] : [dayjs().subtract(6, "day"), dayjs()];
+                            setDateRange(next);
+                            updateUrl({ from: next[0]?.format("YYYY-MM-DD") || null, to: next[1]?.format("YYYY-MM-DD") || null, page: 1 });
+                        }}
+                    />
+                    <Select className="w-32" value={status} onChange={(value) => updateUrl({ status: value, page: 1 })} options={[{ label: "全部结果", value: "all" }, { label: "成功", value: "succeeded" }, { label: "失败", value: "failed" }]} />
+                </>}
+                toolbarActive={hasFilters}
                 onReset={() => {
                     setDateRange([dayjs().subtract(6, "day"), dayjs()]);
                     updateUrl({ filter: "", status: "all", from: null, to: null, page: 1 });
                 }}
-            >
-                <DatePicker.RangePicker
-                    allowClear
-                    value={[dateRange[0], dateRange[1]]}
-                    onChange={(value) => {
-                        const next: [Dayjs | null, Dayjs | null] = value ? [value[0], value[1]] : [dayjs().subtract(6, "day"), dayjs()];
-                        setDateRange(next);
-                        updateUrl({ from: next[0]?.format("YYYY-MM-DD") || null, to: next[1]?.format("YYYY-MM-DD") || null, page: 1 });
-                    }}
-                />
-                <Input
-                    allowClear
-                    className="app-list-search"
-                    prefix={<Search className="size-4 text-foreground/40" />}
-                    value={keyword}
-                    placeholder="搜索用户、渠道、模型、路径或请求号"
-                    onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)}
-                />
-                <Select
-                    className="w-32"
-                    value={status}
-                    onChange={(value) => updateUrl({ status: value, page: 1 })}
-                    options={[
-                        { label: "全部结果", value: "all" },
-                        { label: "成功", value: "succeeded" },
-                        { label: "失败", value: "failed" },
-                    ]}
-                />
-            </ListToolbar>
-            <AdminBatchBar count={selectedIds.length} onClear={() => setSelectedIds([])}>
-                <AdminExportButton
-                    type="primary"
-                    size="small"
-                    exportFile={() => exportAdminApiLogs({ ids: selectedIds })}
-                    fileName={() => `请求明细-已选${selectedIds.length}条.csv`}
-                    label="导出已选"
-                    successMessage={`已导出选中的 ${selectedIds.length} 条请求明细`}
-                    errorMessage="导出请求明细失败"
-                />
-            </AdminBatchBar>
-            <TableSurface>
-                {loading && logs.length === 0 ? (
-                    <AdminTableSkeleton rows={8} columns={11} />
-                ) : (
-                    <Table
-                        className="app-data-table"
-                        size="middle"
-                        rowKey="id"
-                        loading={loading}
-                        rowSelection={{ selectedRowKeys: selectedIds, preserveSelectedRowKeys: false, onChange: (keys) => setSelectedIds(keys.map(String)) }}
-                        columns={columns}
-                        dataSource={logs}
-                        locale={{ emptyText: <AdminTableEmpty filtered={hasFilters} /> }}
-                        pagination={{
-                            current: page,
-                            pageSize,
-                            total,
-                            showSizeChanger: true,
-                            pageSizeOptions: [20, 50, 100],
-                            showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`,
-                            onChange: (nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize }),
-                        }}
-                        scroll={{ x: 1700 }}
-                    />
-                )}
-            </TableSurface>
-            <ApiLogDetailDrawer logId={detailLogId} onClose={() => setDetailLogId(null)} onLogUpdated={(next) => setLogs((items) => items.map((item) => (item.id === next.id ? next : item)))} />
-            <Modal
-                title={mediaPreview?.title || "媒体预览"}
-                open={Boolean(mediaPreview)}
-                width={880}
-                onCancel={() => setMediaPreview(null)}
-                footer={
-                    mediaPreview ? (
-                        <Button icon={<Download className="size-4" />} onClick={() => downloadMedia(mediaPreview.url, mediaPreview.kind)}>
-                            下载原文件
-                        </Button>
-                    ) : null
-                }
-                destroyOnHidden
-            >
-                {mediaPreview?.kind === "video" ? (
-                    <video src={mediaPreview.url} controls playsInline preload="metadata" className="max-h-[72vh] w-full bg-black object-contain" />
-                ) : mediaPreview ? (
-                    <img src={mediaPreview.url} alt={mediaPreview.title} className="max-h-[72vh] w-full bg-black object-contain" />
-                ) : null}
+                batchActions={<AdminBatchBar count={selectedIds.length} onClear={() => setSelectedIds([])}><AdminExportButton type="primary" size="small" exportFile={() => exportAdminApiLogs({ ids: selectedIds })} fileName={() => `请求明细-已选${selectedIds.length}条.csv`} label="导出已选" successMessage={`已导出选中的 ${selectedIds.length} 条请求明细`} errorMessage="导出请求明细失败" /></AdminBatchBar>}
+                skeletonColumns={10}
+                table={{ className: "app-data-table", size: "small", rowKey: "id", loading, rowSelection: { selectedRowKeys: selectedIds, preserveSelectedRowKeys: false, onChange: (keys) => setSelectedIds(keys.map(String)) }, onRow: (log) => ({ onClick: (event) => { if ((event.target as HTMLElement).closest("button,a,input,.ant-checkbox-wrapper")) return; setDetailLogId(log.id); }, className: "admin-table-clickable-row" }), columns, dataSource: logs, pagination: false, scroll: { x: 1600 } }}
+                empty={<AdminTableEmpty filtered={hasFilters} />}
+                footer={<PaginationBar alwaysShow current={page} pageSize={pageSize} total={total} onChange={(nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize })} />}
+            />
+            <ApiLogDetailDrawer logId={detailLogId} onClose={() => setDetailLogId(null)} onLogUpdated={(next) => setLogs((items) => items.map((item) => item.id === next.id ? next : item))} />
+            <Modal title={mediaPreview?.title || "媒体预览"} open={Boolean(mediaPreview)} width={880} onCancel={() => setMediaPreview(null)} footer={mediaPreview ? <Button icon={<Download className="size-4" />} onClick={() => downloadMedia(mediaPreview.url, mediaPreview.kind)}>下载原文件</Button> : null} destroyOnHidden>
+                {mediaPreview?.kind === "video" ? <video src={mediaPreview.url} controls playsInline preload="metadata" className="max-h-[72vh] w-full bg-black object-contain" /> : mediaPreview ? <img src={mediaPreview.url} alt={mediaPreview.title} className="max-h-[72vh] w-full bg-black object-contain" /> : null}
             </Modal>
         </AdminPageFrame>
     );
@@ -326,12 +220,5 @@ function CallStatus({ log }: { log: ApiCallLog }) {
     const providerStatus = log.providerStatus?.toLowerCase();
     const processing = ["queued", "pending", "processing", "running", "in_progress"].includes(providerStatus || "");
     const failed = log.status === "failed" || ["failed", "cancelled", "expired"].includes(providerStatus || "");
-    return (
-        <div>
-            <Tag variant="filled" color={failed ? "error" : processing ? "processing" : "success"}>
-                {failed ? "失败" : processing ? "处理中" : "成功"}
-            </Tag>
-            {log.capability === "video" ? <div className="mt-1 text-xs tabular-nums text-foreground/45">已轮询 {log.pollCount || 0} 次</div> : null}
-        </div>
-    );
+    return <div><AdminStatusBadge label={failed ? "失败" : processing ? "处理中" : "成功"} tone={failed ? "error" : processing ? "warning" : "success"} />{log.capability === "video" ? <div className="mt-1 text-xs tabular-nums text-foreground/45">已轮询 {log.pollCount || 0} 次</div> : null}</div>;
 }

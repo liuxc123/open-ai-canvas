@@ -26,6 +26,7 @@ const (
 	aliyunOSSProvider  = "aliyun"
 	tencentCOSProvider = "tencent"
 	s3OSSProvider      = "s3"
+	qiniuKodoProvider  = "qiniu"
 )
 
 type OSSSettingRequest struct {
@@ -508,8 +509,8 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 		PublicBaseURL:   strings.TrimRight(strings.TrimSpace(req.PublicBaseURL), "/"),
 		PathPrefix:      strings.Trim(strings.TrimSpace(req.PathPrefix), "/"),
 	})
-	if next.Provider != aliyunOSSProvider && next.Provider != tencentCOSProvider && next.Provider != s3OSSProvider {
-		return next, BadAuthRequest("仅支持阿里云 OSS、腾讯云 COS 和 Amazon S3")
+	if next.Provider != aliyunOSSProvider && next.Provider != tencentCOSProvider && next.Provider != s3OSSProvider && next.Provider != qiniuKodoProvider {
+		return next, BadAuthRequest("仅支持阿里云 OSS、腾讯云 COS、Amazon S3 和七牛云 Kodo")
 	}
 	current = normalizeOSSSetting(current)
 	// 不同云厂商的密钥不能复用；只有继续使用同一厂商时，留空才表示保留原密钥。
@@ -533,9 +534,9 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 }
 
 func validateProviderFields(value ossSettingValue) error {
-	allowed := map[string]bool{"aliyun": true, "tencent": true, "s3": true}
+	allowed := map[string]bool{"aliyun": true, "tencent": true, "s3": true, "qiniu": true}
 	if !allowed[value.Provider] {
-		return BadAuthRequest("不支持的存储服务，请选择阿里云 OSS、腾讯云 COS 或 Amazon S3")
+		return BadAuthRequest("不支持的存储服务，请选择阿里云 OSS、腾讯云 COS、Amazon S3 或七牛云 Kodo")
 	}
 	if value.Bucket == "" {
 		return BadAuthRequest("请填写 Bucket")
@@ -561,6 +562,10 @@ func validateProviderFields(value ossSettingValue) error {
 		}
 		if value.Endpoint == "" {
 			return BadAuthRequest("请填写 Endpoint")
+		}
+	case "qiniu":
+		if value.Endpoint == "" {
+			return BadAuthRequest("请填写七牛云 Kodo 上传 Endpoint")
 		}
 	}
 	if _, err := ValidateOutboundURL(value.Endpoint); err != nil {

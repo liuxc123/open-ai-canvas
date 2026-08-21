@@ -11,6 +11,7 @@ export function CreditSymbol({ className, ...props }: ComponentProps<"span">) {
 
 export type ModelCreditCost = {
     model: string;
+    pricePolicy?: "channel" | "unified";
     billingMode: "fixed_request" | "per_second" | "token" | "formula";
     unitPriceMicrocredits: number;
     formulaConfig?: { formula: string };
@@ -36,6 +37,8 @@ export function requestCreditCost(options: {
     if (options.channelMode !== "remote") return null;
     const cost = modelCreditCost(options.modelCosts, options.model);
     if (!cost) return null;
+    // 跟随供应价格的前台模型只有后端完成能力路由后才能确定价格，前端不展示误导性预估。
+    if (cost.pricePolicy === "channel") return null;
     // Token 订单由服务端按请求体预授权并在 usage 返回后结算，前端不展示无依据的固定价格。
     if (cost.billingMode === "token") return null;
     if (cost.billingMode === "formula") {

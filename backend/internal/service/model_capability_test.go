@@ -83,6 +83,46 @@ func TestDefaultVideoCapabilityUsesProtocolSpecificResolutionTiers(t *testing.T)
 	}
 }
 
+func TestDefaultMiniMaxVideoCapabilitySupportsReferenceGeneration(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("minimax-video", "MiniMax-H3")
+	if profile == nil || profile.Video == nil {
+		t.Fatal("MiniMax video profile = nil")
+	}
+	if !containsCapabilityString(profile.Video.Operations, "reference_to_video") {
+		t.Fatalf("operations = %v, want reference_to_video", profile.Video.Operations)
+	}
+}
+
+func TestCapabilitySpecFromModelCapabilityConfigRestoresLegacyWildcardImageSizes(t *testing.T) {
+	config := &ModelCapabilityConfig{
+		Version: 1,
+		Image: &ImageCapabilityConfig{
+			Size: ImageSizeConfig{Parameter: "size", Values: []string{"*"}, AllowCustom: true},
+		},
+	}
+
+	spec, err := CapabilitySpecFromModelCapabilityConfig(config, "image")
+	if err != nil {
+		t.Fatalf("CapabilitySpecFromModelCapabilityConfig() error = %v", err)
+	}
+	constraint, ok := spec.Options["size"]
+	if !ok {
+		t.Fatal("size constraint is missing")
+	}
+	values := make(map[string]int)
+	for _, value := range constraint.Values {
+		values[fmt.Sprint(value)]++
+	}
+	for _, value := range legacyImageSizeValues() {
+		if values[value] != 1 {
+			t.Fatalf("size constraint missing %q: %v", value, constraint.Values)
+		}
+	}
+	if values["*"] != 1 {
+		t.Fatalf("size constraint wildcard count = %d, values = %v", values["*"], constraint.Values)
+	}
+}
+
 func TestNormalizeResolutionSupportsCommonAliases(t *testing.T) {
 	tests := map[string]string{
 		"1440":  "1440p",
@@ -95,5 +135,106 @@ func TestNormalizeResolutionSupportsCommonAliases(t *testing.T) {
 		if got := normalizeResolution(input); got != want {
 			t.Fatalf("normalizeResolution(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestValidateVideoTaskIgnoresGlobalResolutionWhenCatalogDeclaresNone(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("newapi", "omni").Video
+	profile.Duration = VideoDurationConfig{Selection: "enum", Values: []int{8, 10}, Default: 10}
+	profile.Ratios = []string{"16:9", "9:16"}
+	profile.DefaultRatio = "16:9"
+	profile.Resolutions = nil
+	profile.DefaultResolution = ""
+	profile.References.MaxImages = 0
+	profile.Operations = []string{"text_to_video"}
+	profile.DefaultOperation = "text_to_video"
+
+	err := validateVideoTask(profile, canvasGenerationInput{
+		Config: providerConfig{Model: "omni", VideoSeconds: "10", Size: "16:9", VQuality: "720"},
+	})
+	if err != nil {
+		t.Fatalf("validateVideoTask() error = %v", err)
+	}
+}
+
+func TestNormalizeVideoCapabilityAllowsOmittedResolution(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("newapi-channel-2", "endpoint-video").Video
+	profile.Resolutions = nil
+	profile.DefaultResolution = ""
+
+	result, err := NormalizeModelCapabilityConfig("video", "newapi-channel-2", &ModelCapabilityConfig{Version: 1, Video: profile})
+	if err != nil {
+		t.Fatalf("NormalizeModelCapabilityConfig() error = %v", err)
+	}
+	if result.Video == nil || len(result.Video.Resolutions) != 0 || result.Video.DefaultResolution != "" {
+		t.Fatalf("normalized video resolution = %#v", result.Video)
+	}
+}
+
+func TestCapabilitySpecFromModelCapabilityConfigProjectsImageSizeOnce(t *testing.T) {
+	config := &ModelCapabilityConfig{
+		Version: 1,
+		Image: &ImageCapabilityConfig{
+			References: ImageReferenceConfig{MaxImages: 3, MaskSupported: false},
+			Size:       ImageSizeConfig{Parameter: "size", Values: []string{"1:1", "16:9"}, AllowCustom: true},
+			MaxOutputs: 4,
+		},
+	}
+
+	spec, err := CapabilitySpecFromModelCapabilityConfig(config, "image")
+	if err != nil {
+		t.Fatalf("CapabilitySpecFromModelCapabilityConfig() error = %v", err)
+	}
+	if got := spec.Options["size"].Values; len(got) != 3 || got[0] != "1:1" || got[1] != "16:9" || got[2] != "*" {
+		t.Fatalf("size projection = %#v, want configured values plus wildcard", got)
+	}
+	if got := spec.Inputs["image"].Max; got != 3 {
+		t.Fatalf("image input max = %d, want 3", got)
+	}
+	if got := spec.Options["count"].Max; got == nil || *got != 4 {
+		t.Fatalf("count max = %v, want 4", got)
+	}
+}
+
+func TestCapabilitySpecFromModelCapabilityConfigProjectsCustomImageSizeAsWildcard(t *testing.T) {
+	config := &ModelCapabilityConfig{
+		Version: 1,
+		Image: &ImageCapabilityConfig{
+			Size:       ImageSizeConfig{Parameter: "size", Values: []string{"1:1"}, AllowCustom: true},
+			MaxOutputs: 1,
+		},
+	}
+
+	spec, err := CapabilitySpecFromModelCapabilityConfig(config, "image")
+	if err != nil {
+		t.Fatalf("CapabilitySpecFromModelCapabilityConfig() error = %v", err)
+	}
+	if got := spec.Options["size"].Values; len(got) != 2 || got[0] != "1:1" || got[1] != "*" {
+		t.Fatalf("custom size projection = %#v, want configured value plus wildcard", got)
+	}
+}
+
+func TestCapabilitySpecFromModelCapabilityConfigAllowsAudioWithoutConfig(t *testing.T) {
+	spec, err := CapabilitySpecFromModelCapabilityConfig(nil, "audio")
+	if err != nil {
+		t.Fatalf("audio projection error = %v", err)
+	}
+	if spec.Capability != "audio" || len(spec.Inputs) != 0 || len(spec.Options) != 0 {
+		t.Fatalf("audio projection = %#v", spec)
+	}
+}
+
+func TestValidateVideoTaskRequiresDeclaredMinimumImages(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("newapi-channel-2", "image-required-video").Video
+	profile.References.MinImages = 1
+	profile.References.MaxImages = 2
+	profile.Operations = []string{"image_to_video"}
+	profile.DefaultOperation = "image_to_video"
+
+	err := validateVideoTask(profile, canvasGenerationInput{
+		Config: providerConfig{Model: "image-required-video", VideoSeconds: "6", Size: "16:9", VQuality: "720"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "至少需要 1 张参考图") {
+		t.Fatalf("validateVideoTask() error = %v", err)
 	}
 }

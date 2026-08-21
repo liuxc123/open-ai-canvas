@@ -29,6 +29,12 @@ export function batchGetRemoteAssets(ids: string[]) {
     return request<{ assets: Asset[] }>(api.post("/assets/batch-get", { ids }));
 }
 
+// 单条详情读取复用批量接口，避免恢复旧的逐条请求端点。
+export async function getRemoteAsset(id: string) {
+    const { assets } = await batchGetRemoteAssets([id]);
+    return { asset: assets[0] };
+}
+
 export function batchUpsertRemoteAssets(assets: Asset[]) {
     return request<{ assets: RemoteUserDataSummary[] }>(api.post("/assets/batch-upsert", { assets }));
 }
