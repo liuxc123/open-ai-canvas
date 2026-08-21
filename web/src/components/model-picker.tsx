@@ -326,18 +326,20 @@ function formatDurationSummary(profile: NonNullable<ReturnType<typeof modelCapab
     return `${profile.duration.min || values[0]}-${profile.duration.max || values[values.length - 1]}s`;
 }
 
-type ModelMenuPrice = { value: number; unit: "次" | "秒" | "百万 Token" } | { formula: true };
+type ModelMenuPrice = { value: number; unit: "次" | "秒" | "百万 Token" } | { formula: true } | { channel: true };
 
 function modelMenuPrice(config: AiConfig, model: string): ModelMenuPrice | null | undefined {
     if (!model) return undefined;
     const channel = resolveModelChannel(config, model);
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     if (!cost) return channel.scope === "system" ? null : undefined;
-    if (cost.billingMode === "formula") return { formula: true };
-    if (cost.billingMode === "token") {
-        return { value: (cost.outputTokenPriceMicrocredits || 0) / 1_000_000, unit: "百万 Token" };
+    const pricing = cost.pricePolicy === "channel" ? cost.supplierPrice : cost;
+    if (!pricing) return { channel: true };
+    if (pricing.billingMode === "formula" || Boolean(pricing.formulaConfig?.formula?.trim())) return { formula: true };
+    if (pricing.billingMode === "token") {
+        return { value: (pricing.outputTokenPriceMicrocredits || 0) / 1_000_000, unit: "百万 Token" };
     }
-    return { value: cost.unitPriceMicrocredits / 1_000_000, unit: cost.billingMode === "per_second" ? "秒" : "次" };
+    return { value: pricing.unitPriceMicrocredits / 1_000_000, unit: pricing.billingMode === "per_second" ? "秒" : "次" };
 }
 
 function pickerModelDisplayName(config: AiConfig, model: string, showConfiguredModelName: boolean) {
@@ -357,9 +359,12 @@ function ModelPrice({ price, compact = false }: { price: ModelMenuPrice | null |
         return (
             <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--fs-tiny)] font-semibold tabular-nums text-amber-600 dark:text-amber-300" title="按公式计费">
                 <Coins className="size-3" />
-                公式计费
+                公式
             </span>
         );
+    }
+    if ("channel" in price) {
+        return <span className="shrink-0 text-[var(--fs-tiny)] text-foreground/45">跟随供应价格</span>;
     }
     return (
         <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--fs-tiny)] font-bold tabular-nums text-amber-600 dark:text-amber-300" title={`每${price.unit}消耗 ${price.value.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 积分`}>

@@ -26,11 +26,20 @@ export type PublicLogicalModel = {
     capability: CapabilitySpec["capability"];
     sortOrder: number;
     pricePolicy: "channel" | "unified";
-    billingMode: "fixed_request" | "per_second" | "token";
+    billingMode: "fixed_request" | "per_second" | "token" | "formula";
     unitPriceMicrocredits: number;
     inputPriceMicrocredits: number;
     outputPriceMicrocredits: number;
     cachedPriceMicrocredits: number;
+    formulaConfig?: { formula: string };
+    supplierPrice?: {
+        billingMode: "fixed_request" | "per_second" | "token" | "formula";
+        unitPriceMicrocredits: number;
+        inputTokenPriceMicrocredits: number;
+        outputTokenPriceMicrocredits: number;
+        cachedTokenPriceMicrocredits: number;
+        formulaConfig?: { formula: string };
+    };
     capabilitySpec: CapabilitySpec;
     capabilityProfiles: CapabilitySpec[];
     defaultOptions: Record<string, unknown>;
@@ -73,6 +82,7 @@ export type LogicalModelMutation = {
     inputPriceMicrocredits: number;
     outputPriceMicrocredits: number;
     cachedPriceMicrocredits: number;
+    formulaConfig?: { formula: string };
     capabilitySpec: CapabilitySpec;
     defaultOptions: Record<string, unknown>;
     routes: Array<{ channelModelId: string; enabled: boolean; priority: number; weight: number }>;

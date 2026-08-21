@@ -28,6 +28,8 @@ type LogicalModel struct {
 	InputPriceMicrocredits  int64  `json:"inputPriceMicrocredits"`
 	OutputPriceMicrocredits int64  `json:"outputPriceMicrocredits"`
 	CachedPriceMicrocredits int64  `json:"cachedPriceMicrocredits"`
+	FormulaConfigJSON string                `json:"-" gorm:"type:text"`
+	FormulaConfig     *FormulaBillingConfig `json:"formulaConfig,omitempty" gorm:"-"`
 	// ArchivedAt 仅从可选目录隐藏模型；历史任务、计费和审计仍需读取主体及不可变 revision。
 	ArchivedAt *time.Time `json:"-" gorm:"index"`
 	CreatedAt  time.Time  `json:"createdAt"`

@@ -504,6 +504,12 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 		pricing := &model.ChannelModel{InputTokenPriceMicrocredits: logicalModel.InputPriceMicrocredits, OutputTokenPriceMicrocredits: logicalModel.OutputPriceMicrocredits, CachedTokenPriceMicrocredits: logicalModel.CachedPriceMicrocredits}
 		amount, err = tokenEstimateAmount(pricing, tokenEstimate, 10_000)
 		quantity = tokenEstimate.InputTokens + tokenEstimate.OutputTokens
+	case "formula":
+		formulaCfg := parseFormulaConfig(logicalModel.FormulaConfigJSON)
+		if formulaCfg == nil {
+			return nil, BadAuthRequest("当前模型公式计费配置缺失，请重新选择")
+		}
+		amount, err = formulaAmountMicrocredits(formulaCfg, normalizeFormulaBody(input, config), nil, 10_000)
 	default:
 		return nil, BadAuthRequest("当前模型计费方式暂不支持")
 	}

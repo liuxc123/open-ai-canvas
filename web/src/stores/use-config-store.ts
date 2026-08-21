@@ -54,6 +54,14 @@ export type ModelChannel = {
         cachedTokenPriceMicrocredits?: number;
         capabilityConfig?: ModelCapabilityConfig;
         formulaConfig?: { formula: string };
+        supplierPrice?: {
+            billingMode: "fixed_request" | "per_second" | "token" | "formula";
+            unitPriceMicrocredits: number;
+            inputTokenPriceMicrocredits: number;
+            outputTokenPriceMicrocredits: number;
+            cachedTokenPriceMicrocredits: number;
+            formulaConfig?: { formula: string };
+        };
         logicalModelId?: string;
         logicalCapabilitySpec?: CapabilitySpec;
         logicalCapabilityProfiles?: CapabilitySpec[];

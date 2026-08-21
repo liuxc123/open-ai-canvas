@@ -18,22 +18,23 @@ import (
 var logicalModelCodePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,79}$`)
 
 type LogicalModelRequest struct {
-	Code                    string                `json:"code"`
-	Name                    string                `json:"name"`
-	Icon                    string                `json:"icon"`
-	Description             string                `json:"description"`
-	Capability              string                `json:"capability"`
-	Enabled                 bool                  `json:"enabled"`
-	SortOrder               int                   `json:"sortOrder"`
-	PricePolicy             string                `json:"pricePolicy"`
-	BillingMode             string                `json:"billingMode"`
-	UnitPriceMicrocredits   int64                 `json:"unitPriceMicrocredits"`
-	InputPriceMicrocredits  int64                 `json:"inputPriceMicrocredits"`
-	OutputPriceMicrocredits int64                 `json:"outputPriceMicrocredits"`
-	CachedPriceMicrocredits int64                 `json:"cachedPriceMicrocredits"`
-	CapabilitySpec          CapabilitySpec        `json:"capabilitySpec"`
-	DefaultOptions          map[string]any        `json:"defaultOptions"`
-	Routes                  []LogicalRouteRequest `json:"routes"`
+	Code                    string                      `json:"code"`
+	Name                    string                      `json:"name"`
+	Icon                    string                      `json:"icon"`
+	Description             string                      `json:"description"`
+	Capability              string                      `json:"capability"`
+	Enabled                 bool                        `json:"enabled"`
+	SortOrder               int                         `json:"sortOrder"`
+	PricePolicy             string                      `json:"pricePolicy"`
+	BillingMode             string                      `json:"billingMode"`
+	UnitPriceMicrocredits   int64                       `json:"unitPriceMicrocredits"`
+	InputPriceMicrocredits  int64                       `json:"inputPriceMicrocredits"`
+	OutputPriceMicrocredits int64                       `json:"outputPriceMicrocredits"`
+	CachedPriceMicrocredits int64                       `json:"cachedPriceMicrocredits"`
+	FormulaConfig           *model.FormulaBillingConfig `json:"formulaConfig"`
+	CapabilitySpec          CapabilitySpec              `json:"capabilitySpec"`
+	DefaultOptions          map[string]any              `json:"defaultOptions"`
+	Routes                  []LogicalRouteRequest       `json:"routes"`
 }
 
 type LogicalRouteRequest struct {
@@ -44,24 +45,35 @@ type LogicalRouteRequest struct {
 }
 
 type PublicLogicalModel struct {
-	ID                      string         `json:"id"`
-	Code                    string         `json:"code"`
-	Name                    string         `json:"name"`
-	Icon                    string         `json:"icon"`
-	Description             string         `json:"description"`
-	Capability              string         `json:"capability"`
-	SortOrder               int            `json:"sortOrder"`
-	PricePolicy             string         `json:"pricePolicy"`
-	BillingMode             string         `json:"billingMode"`
-	UnitPriceMicrocredits   int64          `json:"unitPriceMicrocredits"`
-	InputPriceMicrocredits  int64          `json:"inputPriceMicrocredits"`
-	OutputPriceMicrocredits int64          `json:"outputPriceMicrocredits"`
-	CachedPriceMicrocredits int64          `json:"cachedPriceMicrocredits"`
-	CapabilitySpec          CapabilitySpec `json:"capabilitySpec"`
+	ID                      string                      `json:"id"`
+	Code                    string                      `json:"code"`
+	Name                    string                      `json:"name"`
+	Icon                    string                      `json:"icon"`
+	Description             string                      `json:"description"`
+	Capability              string                      `json:"capability"`
+	SortOrder               int                         `json:"sortOrder"`
+	PricePolicy             string                      `json:"pricePolicy"`
+	BillingMode             string                      `json:"billingMode"`
+	UnitPriceMicrocredits   int64                       `json:"unitPriceMicrocredits"`
+	InputPriceMicrocredits  int64                       `json:"inputPriceMicrocredits"`
+	OutputPriceMicrocredits int64                       `json:"outputPriceMicrocredits"`
+	CachedPriceMicrocredits int64                       `json:"cachedPriceMicrocredits"`
+	FormulaConfig           *model.FormulaBillingConfig `json:"formulaConfig,omitempty"`
+	SupplierPrice           *PublicLogicalModelPrice    `json:"supplierPrice,omitempty"`
+	CapabilitySpec          CapabilitySpec              `json:"capabilitySpec"`
 	// CapabilityProfiles 是创作端可见的匿名能力组合，不暴露其背后的供应线路关系。
 	CapabilityProfiles []CapabilitySpec `json:"capabilityProfiles"`
 	DefaultOptions     map[string]any   `json:"defaultOptions"`
 	Available          bool             `json:"available"`
+}
+
+type PublicLogicalModelPrice struct {
+	BillingMode                  string                      `json:"billingMode"`
+	UnitPriceMicrocredits        int64                       `json:"unitPriceMicrocredits"`
+	InputTokenPriceMicrocredits  int64                       `json:"inputTokenPriceMicrocredits"`
+	OutputTokenPriceMicrocredits int64                       `json:"outputTokenPriceMicrocredits"`
+	CachedTokenPriceMicrocredits int64                       `json:"cachedTokenPriceMicrocredits"`
+	FormulaConfig                *model.FormulaBillingConfig `json:"formulaConfig,omitempty"`
 }
 
 type AdminLogicalRoute struct {
@@ -159,7 +171,24 @@ func publicLogicalModel(cached cachedLogicalModel, available bool) PublicLogical
 			profiles = append(profiles, route.CapabilitySpec)
 		}
 	}
-	return PublicLogicalModel{ID: item.ID, Code: item.Code, Name: item.Name, Icon: item.Icon, Description: item.Description, Capability: item.Capability, SortOrder: item.SortOrder, PricePolicy: item.PricePolicy, BillingMode: item.BillingMode, UnitPriceMicrocredits: item.UnitPriceMicrocredits, InputPriceMicrocredits: item.InputPriceMicrocredits, OutputPriceMicrocredits: item.OutputPriceMicrocredits, CachedPriceMicrocredits: item.CachedPriceMicrocredits, CapabilitySpec: productSpec, CapabilityProfiles: profiles, DefaultOptions: cached.Defaults, Available: available}
+	var supplierPrice *PublicLogicalModelPrice
+	if item.PricePolicy == "channel" {
+		for _, route := range cached.Routes {
+			if !route.Route.Enabled || route.Route.Weight <= 0 || !route.ChannelModel.PriceConfigured {
+				continue
+			}
+			supplierPrice = &PublicLogicalModelPrice{
+				BillingMode:                  route.ChannelModel.BillingMode,
+				UnitPriceMicrocredits:        route.ChannelModel.UnitPriceMicrocredits,
+				InputTokenPriceMicrocredits:  route.ChannelModel.InputTokenPriceMicrocredits,
+				OutputTokenPriceMicrocredits: route.ChannelModel.OutputTokenPriceMicrocredits,
+				CachedTokenPriceMicrocredits: route.ChannelModel.CachedTokenPriceMicrocredits,
+				FormulaConfig:                parseFormulaConfig(route.ChannelModel.FormulaConfigJSON),
+			}
+			break
+		}
+	}
+	return PublicLogicalModel{ID: item.ID, Code: item.Code, Name: item.Name, Icon: item.Icon, Description: item.Description, Capability: item.Capability, SortOrder: item.SortOrder, PricePolicy: item.PricePolicy, BillingMode: item.BillingMode, UnitPriceMicrocredits: item.UnitPriceMicrocredits, InputPriceMicrocredits: item.InputPriceMicrocredits, OutputPriceMicrocredits: item.OutputPriceMicrocredits, CachedPriceMicrocredits: item.CachedPriceMicrocredits, FormulaConfig: parseFormulaConfig(item.FormulaConfigJSON), SupplierPrice: supplierPrice, CapabilitySpec: productSpec, CapabilityProfiles: profiles, DefaultOptions: cached.Defaults, Available: available}
 }
 
 // capabilitySpecWithRoutePresets repairs old front-model snapshots that stored
@@ -474,11 +503,19 @@ func (s *Service) logicalModelBundle(actor *model.User, id string, req LogicalMo
 	if pricePolicy == "channel" {
 		billingMode = "fixed_request"
 		req.UnitPriceMicrocredits, req.InputPriceMicrocredits, req.OutputPriceMicrocredits, req.CachedPriceMicrocredits = 0, 0, 0, 0
-	} else if billingMode != "fixed_request" && billingMode != "per_second" && billingMode != "token" {
-		return nil, nil, nil, false, BadAuthRequest("前台模型计费方式仅支持按次、按秒或 Token")
+	} else if billingMode != "fixed_request" && billingMode != "per_second" && billingMode != "token" && billingMode != "formula" {
+		return nil, nil, nil, false, BadAuthRequest("前台模型计费方式仅支持按次、按秒、Token 或公式")
 	}
 	if pricePolicy == "unified" && billingMode == "per_second" && capability != "video" {
 		return nil, nil, nil, false, BadAuthRequest("只有视频前台模型可以按秒计费")
+	}
+	if pricePolicy == "unified" && billingMode == "formula" {
+		if req.FormulaConfig == nil || strings.TrimSpace(req.FormulaConfig.Formula) == "" {
+			return nil, nil, nil, false, BadAuthRequest("公式计费需要配置计算公式")
+		}
+		if err := ValidateFormula(req.FormulaConfig.Formula); err != nil {
+			return nil, nil, nil, false, BadAuthRequest(err.Error())
+		}
 	}
 	creating := strings.TrimSpace(id) == ""
 	var item *model.LogicalModel
@@ -500,6 +537,13 @@ func (s *Service) logicalModelBundle(actor *model.User, id string, req LogicalMo
 	item.Code, item.Name, item.Icon, item.Description, item.Capability = code, name, strings.TrimSpace(req.Icon), strings.TrimSpace(req.Description), capability
 	item.Enabled, item.SortOrder, item.PricePolicy, item.BillingMode = req.Enabled, req.SortOrder, pricePolicy, billingMode
 	item.UnitPriceMicrocredits, item.InputPriceMicrocredits, item.OutputPriceMicrocredits, item.CachedPriceMicrocredits = req.UnitPriceMicrocredits, req.InputPriceMicrocredits, req.OutputPriceMicrocredits, req.CachedPriceMicrocredits
+	if billingMode == "formula" {
+		item.FormulaConfigJSON = serializeFormulaConfig(req.FormulaConfig)
+		item.FormulaConfig = req.FormulaConfig
+	} else {
+		item.FormulaConfigJSON = ""
+		item.FormulaConfig = nil
+	}
 	item.UpdatedAt = time.Now()
 	revisionID, err := s.repo.NextPrefixedID("REVISION")
 	if err != nil {

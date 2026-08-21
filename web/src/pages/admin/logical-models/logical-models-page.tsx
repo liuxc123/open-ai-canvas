@@ -1,8 +1,8 @@
-import { Alert, App, Button, Drawer, Form, Input, InputNumber, Modal, Segmented, Select, Switch, Table, Tag } from "antd";
+import { Alert, App, Button, Drawer, Form, Input, InputNumber, Modal, Segmented, Select, Switch, Table, Tag, Tooltip } from "antd";
 import type { FormInstance } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Archive, FlaskConical, GitBranch, Layers3, Pencil, Plus, Search } from "lucide-react";
-import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { PaginationBar } from "@/components/layout/workspace-page";
 import { ModelIconPicker, ModelLogo } from "@/components/model-logo";
@@ -56,6 +56,7 @@ type LogicalModelFormValues = {
     inputPriceMicrocredits: number;
     outputPriceMicrocredits: number;
     cachedPriceMicrocredits: number;
+    formula: string;
     capabilitySpec: CapabilitySpec;
     defaultOptions: Record<string, unknown>;
     routes: RouteRuleRow[];
@@ -138,6 +139,7 @@ export default function LogicalModelsPage() {
                       inputPriceMicrocredits: 0,
                       outputPriceMicrocredits: 0,
                       cachedPriceMicrocredits: 0,
+                      formula: "",
                       capabilitySpec: emptyCapabilitySpec(capability),
                       defaultOptions: {},
                       routes: [],
@@ -416,9 +418,12 @@ export default function LogicalModelsPage() {
                             <DefaultOptionsEditor spec={modelCapabilitySpec} />
                         </Form.Item>
                     </DrawerSection>
-                    <DrawerSection title="用户价格">
+                    <section className="admin-form-section">
+                        <div className="mb-4">
+                            <h2 className="text-sm font-semibold">用户价格</h2>
+                        </div>
                         <PricingFields channelModels={channelModels} />
-                    </DrawerSection>
+                    </section>
                 </Form>
             </Drawer>
 
@@ -602,6 +607,7 @@ function logicalModelStatusTag(item: AdminLogicalModel) {
 
 function PricingFields({ channelModels }: { channelModels: ChannelModel[] }) {
     const form = Form.useFormInstance<LogicalModelFormValues>();
+    const formulaTextareaRef = useRef<HTMLTextAreaElement>(null);
     const pricePolicy = Form.useWatch("pricePolicy") as LogicalModelMutation["pricePolicy"] | undefined;
     const billingMode = Form.useWatch("billingMode") as LogicalModelMutation["billingMode"] | undefined;
     const capability = Form.useWatch("capability") as CapabilityKind | undefined;
@@ -615,18 +621,27 @@ function PricingFields({ channelModels }: { channelModels: ChannelModel[] }) {
                 const channelModel = channelModels.find((item) => item.id === route.channelModelId);
                 return modelProtocolSupportsTokenBilling(channelModel?.capability, channelModel?.protocol);
             }));
-    const modes: Array<{ label: string; value: LogicalModelMutation["billingMode"]; disabled?: boolean }> = [{ label: "按次", value: "fixed_request" }];
-    if (capability === "video") {
-        modes.push({ label: "按秒", value: "per_second" });
-        modes.push({ label: "Token", value: "token", disabled: !tokenBillingSupported });
-    }
-    if (capability === "text") modes.push({ label: "Token", value: "token" });
+    const modes: Array<{ label: string; value: LogicalModelMutation["billingMode"]; disabled?: boolean }> = [
+        { label: "按次计费", value: "fixed_request" },
+        { label: "按秒计费", value: "per_second", disabled: capability !== "video" },
+        { label: "Token 计费", value: "token", disabled: !tokenBillingSupported },
+        { label: "公式计费", value: "formula" },
+    ];
 
     useEffect(() => {
         if (pricePolicy === "unified" && billingMode === "token" && !tokenBillingSupported) {
             form.setFieldValue("billingMode", capability === "video" ? "per_second" : "fixed_request");
         }
     }, [billingMode, capability, form, pricePolicy, tokenBillingSupported]);
+
+    const handleBillingModeChange = (value: string | number) => {
+        const mode = value as LogicalModelMutation["billingMode"];
+        if (mode !== "formula") form.setFieldValue("formula", "");
+        if (mode !== "token") {
+            form.setFieldsValue({ inputPriceMicrocredits: 0, outputPriceMicrocredits: 0, cachedPriceMicrocredits: 0 });
+        }
+        if (mode !== "fixed_request" && mode !== "per_second") form.setFieldValue("unitPriceMicrocredits", 0);
+    };
 
     const changePolicy = (value: string | number) => {
         const nextPolicy = value as LogicalModelMutation["pricePolicy"];
@@ -650,16 +665,14 @@ function PricingFields({ channelModels }: { channelModels: ChannelModel[] }) {
             </Form.Item>
             {pricePolicy === "unified" ? (
                 <>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                        <Form.Item name="billingMode" label="计费方式">
-                            <Segmented block options={modes} />
+                    <Form.Item name="billingMode" label="计费方式">
+                        <Segmented block options={modes} onChange={handleBillingModeChange} />
+                    </Form.Item>
+                    {billingMode !== "token" && billingMode !== "formula" ? (
+                        <Form.Item name="unitPriceMicrocredits" label={billingMode === "per_second" ? "每秒消耗积分" : "每次消耗积分"}>
+                            <CreditsInput />
                         </Form.Item>
-                        {billingMode !== "token" ? (
-                            <Form.Item name="unitPriceMicrocredits" label={billingMode === "per_second" ? "每秒消耗积分" : "每次消耗积分"}>
-                                <CreditsInput />
-                            </Form.Item>
-                        ) : null}
-                    </div>
+                    ) : null}
                     {capability === "video" && !tokenBillingSupported ? <div className="mb-3 text-xs leading-5 text-foreground/50">Token 计费仅在所有启用供应线路都使用火山方舟视频协议时可用。</div> : null}
                     {billingMode === "token" ? (
                         capability === "video" ? (
@@ -680,11 +693,118 @@ function PricingFields({ channelModels }: { channelModels: ChannelModel[] }) {
                             </div>
                         )
                     ) : null}
+                    {billingMode === "formula" ? <FormulaBillingFields textareaRef={formulaTextareaRef} /> : null}
                 </>
             ) : (
                 <div className="rounded-md bg-muted/20 px-3 py-3 text-xs leading-5 text-foreground/55">用户费用按实际命中的供应线路价格计算。故障切换到更高价格线路时会重新校验余额。</div>
             )}
         </>
+    );
+}
+
+const formulaSnippetGroups = [
+    {
+        title: "请求体",
+        items: [
+            { label: "duration", snippet: "body.duration", tip: "视频时长（秒）" },
+            { label: "seconds", snippet: "body.seconds", tip: "视频时长（秒）" },
+            { label: "resolution", snippet: "body.resolution", tip: "视频分辨率，如 480p、720p、1080p" },
+            { label: "width", snippet: "body.width", tip: "图片或视频宽度" },
+            { label: "height", snippet: "body.height", tip: "图片或视频高度" },
+            { label: "size", snippet: "body.size", tip: "图片或视频尺寸" },
+            { label: "quality", snippet: "body.quality", tip: "质量参数" },
+            { label: "n", snippet: "body.n", tip: "生成数量" },
+            { label: "model", snippet: "body.model", tip: "模型名称" },
+            { label: "max_tokens", snippet: "body.max_tokens", tip: "最大输出 Token 数" },
+            { label: "temperature", snippet: "body.temperature", tip: "温度参数" },
+        ],
+    },
+    {
+        title: "运算",
+        items: [
+            { label: "+", snippet: " + " },
+            { label: "-", snippet: " - " },
+            { label: "*", snippet: " * " },
+            { label: "/", snippet: " / " },
+            { label: ">", snippet: " > " },
+            { label: "<", snippet: " < " },
+            { label: ">=", snippet: " >= " },
+            { label: "<=", snippet: " <= " },
+            { label: "==", snippet: " == " },
+            { label: "!=", snippet: " != " },
+            { label: "&&", snippet: " && " },
+            { label: "||", snippet: " || " },
+            { label: "!", snippet: "!" },
+            { label: "?:", snippet: " ?  : ", tip: "条件 ? 真值 : 假值" },
+            { label: "in", snippet: " in ", tip: '值 in ["a", "b"]' },
+        ],
+    },
+    {
+        title: "函数",
+        items: [
+            { label: "ceil", snippet: "ceil()", tip: "向上取整" },
+            { label: "floor", snippet: "floor()", tip: "向下取整" },
+            { label: "round", snippet: "round()", tip: "四舍五入" },
+            { label: "abs", snippet: "abs()", tip: "绝对值" },
+            { label: "max", snippet: "max(, )", tip: "取较大值" },
+            { label: "min", snippet: "min(, )", tip: "取较小值" },
+            { label: "len", snippet: "len()", tip: "数组长度" },
+        ],
+    },
+];
+
+function FormulaBillingFields({ textareaRef }: { textareaRef: RefObject<HTMLTextAreaElement | null> }) {
+    const insertSnippet = (snippet: string) => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        const start = textarea.selectionStart ?? textarea.value.length;
+        const end = textarea.selectionEnd ?? textarea.value.length;
+        const nextValue = textarea.value.slice(0, start) + snippet + textarea.value.slice(end);
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+        nativeSetter?.call(textarea, nextValue);
+        const cursorOffset = snippet.includes("()") ? snippet.indexOf(")") : snippet.includes("(, )") ? snippet.indexOf(", ") + 2 : snippet.length;
+        textarea.selectionStart = textarea.selectionEnd = start + cursorOffset;
+        textarea.focus();
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    return (
+        <div className="space-y-2">
+            <div className="text-xs text-foreground/50">点击下方常量可插入到公式中</div>
+            <div className="space-y-1.5">
+                {formulaSnippetGroups.map((group) => (
+                    <div key={group.title} className="flex flex-wrap items-center gap-1">
+                        <span className="mr-1 text-[var(--fs-micro)] font-medium text-foreground/40">{group.title}</span>
+                        {group.items.map((item) => (
+                            <Tooltip key={item.label} title={item.tip || item.snippet} mouseEnterDelay={0.4}>
+                                <Tag className="cursor-pointer !m-0 !px-1.5 !text-[var(--fs-micro)] !font-mono !leading-5 transition-colors hover:!bg-primary/10 hover:!text-primary hover:!border-primary/30" onClick={() => insertSnippet(item.snippet)}>
+                                    {item.label}
+                                </Tag>
+                            </Tooltip>
+                        ))}
+                    </div>
+                ))}
+            </div>
+            <Form.Item name="formula" label="计算公式" rules={[{ required: true, whitespace: true, message: "请输入计算公式" }]}>
+                <Input.TextArea
+                    ref={(node) => {
+                        const native = node?.nativeElement;
+                        if (native instanceof HTMLTextAreaElement) textareaRef.current = native;
+                    }}
+                    autoSize={{ minRows: 2, maxRows: 6 }}
+                    placeholder="例如：body.duration * 0.5"
+                />
+            </Form.Item>
+            <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs leading-5 text-foreground/55">
+                <div className="mb-1 font-medium text-foreground/70">公式语法说明</div>
+                <div>• <code className="text-foreground/80">body.xxx</code> 访问生成参数</div>
+                <div>• 算术: <code>+ - * /</code> &nbsp; 比较: <code>&gt; &lt; &gt;= &lt;= == !=</code> &nbsp; 逻辑: <code>&& || !</code></div>
+                <div>• 条件: <code>条件 ? 真值 : 假值</code>（可嵌套实现多档） &nbsp; 成员: <code>in ["a","b"]</code></div>
+                <div>• 函数: <code>ceil floor round abs max min len</code></div>
+                <div>• 多档示例: <code>body.duration &gt; 30 ? 3.0 : (body.duration &gt; 10 ? 2.0 : 1.0)</code></div>
+                <div>• 公式结果单位为积分，如 <code>body.duration * 0.5</code> 表示每秒 0.5 积分</div>
+            </div>
+        </div>
     );
 }
 
@@ -694,6 +814,7 @@ function CreditsInput({ value = 0, onChange }: { value?: number; onChange?: (val
 
 function logicalPriceLabel(item: AdminLogicalModel) {
     if (item.pricePolicy === "channel") return <span className="text-xs">跟随供应价格</span>;
+    if (item.billingMode === "formula") return <span className="text-xs">公式计费</span>;
     if (item.billingMode === "token" && item.capability === "video") return <span className="text-xs">视频 {formatCredits(item.outputPriceMicrocredits)} / 百万 Token</span>;
     if (item.billingMode === "token")
         return (
@@ -725,6 +846,7 @@ function logicalModelToForm(item: AdminLogicalModel): LogicalModelFormValues {
         inputPriceMicrocredits: item.inputPriceMicrocredits,
         outputPriceMicrocredits: item.outputPriceMicrocredits,
         cachedPriceMicrocredits: item.cachedPriceMicrocredits,
+        formula: item.formulaConfig?.formula || "",
         capabilitySpec: item.capabilitySpec,
         defaultOptions: item.defaultOptions,
         routes: item.routes.map((route) => ({ channelModelId: route.channelModelId, enabled: route.enabled, priority: route.priority, weight: route.weight })),
@@ -747,6 +869,7 @@ function logicalModelPayload(values: LogicalModelFormValues, sourceSpecs: Capabi
         inputPriceMicrocredits: values.inputPriceMicrocredits || 0,
         outputPriceMicrocredits: values.outputPriceMicrocredits || 0,
         cachedPriceMicrocredits: values.cachedPriceMicrocredits || 0,
+        formulaConfig: values.billingMode === "formula" ? { formula: values.formula.trim() } : undefined,
         capabilitySpec,
         defaultOptions: sanitizeDefaults(capabilitySpec, values.defaultOptions),
         routes: values.routes.map((route) => ({ ...route, priority: route.priority || 0, weight: route.weight || 0 })),
