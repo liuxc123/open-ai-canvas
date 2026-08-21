@@ -38,6 +38,7 @@ type BackendGenerationTaskOptions = {
     textHistory?: Array<{ role: "user" | "assistant"; content: string }>;
     mask?: ReferenceImage;
     signal?: AbortSignal;
+    cancelTaskOnAbort?: boolean;
     metadata?: Record<string, unknown>;
     onTaskUpdate?: (task: GenerationTask) => void;
     localIdempotencyKey?: string;
@@ -86,6 +87,7 @@ export async function runBackendGenerationTask(
         textHistory = [],
         mask,
         signal,
+        cancelTaskOnAbort,
         metadata,
         onTaskUpdate,
         localIdempotencyKey,
@@ -108,7 +110,7 @@ export async function runBackendGenerationTask(
     }
     const prepared = await prepareGenerationReferences({ referenceImages, referenceVideos, referenceAudios, mask });
     throwIfAborted(signal);
-    return createAndWaitGenerationTask({ projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate }, prepared, dependencies);
+    return createAndWaitGenerationTask({ projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, signal, cancelTaskOnAbort, metadata, onTaskUpdate }, prepared, dependencies);
 }
 
 export async function runBackendToolGenerationTask(options: {
@@ -382,7 +384,7 @@ async function prepareGenerationReferences({
 }
 
 async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
-    const { projectId, mode, prompt, config, signal, metadata, onTaskUpdate } = options;
+    const { projectId, mode, prompt, config, signal, cancelTaskOnAbort, metadata, onTaskUpdate } = options;
     const videoOperation = generationOperation(options);
     const logicalModelId = logicalModelIDForConfig(config);
     const task = await dependencies.createTask({
@@ -406,7 +408,7 @@ async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions
         },
     });
     onTaskUpdate?.(task);
-    const completed = await dependencies.waitTask(task.id, { signal, initialTask: task, onTaskUpdate });
+    const completed = await dependencies.waitTask(task.id, { signal, cancelOnAbort: cancelTaskOnAbort, initialTask: task, onTaskUpdate });
     return parseBackendGenerationResult(completed);
 }
 

@@ -486,7 +486,7 @@ function safeTaskLogErrorCode(value: unknown) {
     return undefined;
 }
 
-export async function waitForGenerationTask(id: string, options?: { signal?: AbortSignal; intervalMs?: number; timeoutMs?: number; initialTask?: GenerationTask; onTaskUpdate?: (task: GenerationTask) => void }) {
+export async function waitForGenerationTask(id: string, options?: { signal?: AbortSignal; cancelOnAbort?: boolean; intervalMs?: number; timeoutMs?: number; initialTask?: GenerationTask; onTaskUpdate?: (task: GenerationTask) => void }) {
     if (isLocalDreaminaTaskId(id)) {
         try {
             const task = await waitForLocalGenerationTask(id, { signal: options?.signal });
@@ -531,8 +531,10 @@ export async function waitForGenerationTask(id: string, options?: { signal?: Abo
         }
     } catch (error) {
         if (options?.signal?.aborted) {
-            await cancelGenerationTask(id).catch(() => undefined);
-            window.dispatchEvent(new CustomEvent("wallet:updated"));
+            if (options.cancelOnAbort) {
+                await cancelGenerationTask(id).catch(() => undefined);
+                window.dispatchEvent(new CustomEvent("wallet:updated"));
+            }
             throw new DOMException("Aborted", "AbortError");
         }
         throw error;
