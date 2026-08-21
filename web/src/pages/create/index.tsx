@@ -148,6 +148,7 @@ export default function CreatePage() {
     const [historyOpen, setHistoryOpen] = useState(false);
     const [libraryOpen, setLibraryOpen] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
+    const activeBoundTaskIdsRef = useRef<Set<string>>(new Set<string>());
     const fileInputRef = useRef<HTMLInputElement>(null);
     const composerFocusRef = useRef<HTMLTextAreaElement>(null);
     const threadScrollRef = useRef<HTMLElement>(null);
@@ -479,6 +480,7 @@ export default function CreatePage() {
         const controller = new AbortController();
         const requestLifecycle = beginGenerationConsumer(controller.signal);
         abortRef.current = controller;
+        activeBoundTaskIdsRef.current = boundTaskIds;
         const requestConfig = { ...config, model: selectedModel, imageModel: selectedModel, videoModel: selectedModel, textModel: selectedModel, size: ratio, videoSeconds: seconds, quality, vquality: videoQuality, count };
         try {
             if (mode === "text") {
@@ -570,6 +572,7 @@ export default function CreatePage() {
                 abortRef.current = null;
                 setBusy(false);
             }
+            if (activeBoundTaskIdsRef.current === boundTaskIds) activeBoundTaskIdsRef.current = new Set<string>();
         }
     };
 
@@ -766,7 +769,12 @@ export default function CreatePage() {
         composerFocusRef,
         placeholderOverride: viewMode === "storyboard" && composingNextShot ? `SC.${String(nextShotNumber).padStart(2, "0")} · 写下这一镜的镜头、画面或故事` : undefined,
         onSubmit: () => void submit(),
-        onStop: () => abortRef.current?.abort(),
+        onStop: () => {
+            abortRef.current?.abort();
+            const taskIds = Array.from(activeBoundTaskIdsRef.current);
+            if (!taskIds.length) return;
+            void Promise.allSettled(taskIds.map((taskId) => cancelGenerationTask(taskId))).then(() => window.dispatchEvent(new CustomEvent("wallet:updated")));
+        },
     };
 
     const visibleShot = shots[visibleShotIndex];
