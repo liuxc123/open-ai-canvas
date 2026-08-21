@@ -113,6 +113,40 @@ export async function runBackendGenerationTask(
     return createAndWaitGenerationTask({ projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, signal, cancelTaskOnAbort, metadata, onTaskUpdate }, prepared, dependencies);
 }
 
+export async function runBackendToolGenerationTask(options: {
+    prompt: string;
+    config: AiConfig;
+    messages: ResponseInputMessage[];
+    tools: ResponseFunctionTool[];
+    toolChoice: ToolChoice;
+    signal?: AbortSignal;
+}): Promise<ToolResponseResult> {
+    throwIfAborted(options.signal);
+    const logicalModelId = logicalModelIDForConfig(options.config);
+    if (!logicalModelId) throw new Error("当前模型不是平台系统模型");
+    const task = await createGenerationTask({
+        type: "canvas_text",
+        operation: "text",
+        prompt: options.prompt,
+        model: options.config.model,
+        logicalModelId,
+        input: {
+            mode: "text",
+            prompt: options.prompt,
+            config: backendProviderConfig(options.config),
+            agentRequests: buildBackendToolRequests(options.messages, options.tools, options.toolChoice),
+            metadata: { source: "canvas-online-agent" },
+        },
+    });
+    const completed = await waitForGenerationTask(task.id, { signal: options.signal, initialTask: task });
+    const result = parseBackendGenerationResult(completed);
+    return {
+        content: result.text || "",
+        toolCalls: result.toolCalls || [],
+        ...(result.reasoning ? { reasoning: result.reasoning } : {}),
+    };
+}
+
 export async function runBackendGenerationTaskBatch(options: BackendGenerationTaskOptions & { count: number }, dependencies: GenerationTaskDependencies = defaultDependencies) {
     const count = Math.max(1, Math.min(15, Math.floor(Number(options.count)) || 1));
     throwIfAborted(options.signal);
