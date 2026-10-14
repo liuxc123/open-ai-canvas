@@ -445,9 +445,6 @@ func signedCOSObjectURL(setting Settings, objectKey string, signing objectURLSig
 	}
 	signedAt := signingTime(signing.SignedAt)
 	query := url.Values{}
-	if signing.CacheControl != "" {
-		query.Set("response-cache-control", signing.CacheControl)
-	}
 	if signing.ContentDisposition != "" {
 		query.Set("response-content-disposition", signing.ContentDisposition)
 	}
