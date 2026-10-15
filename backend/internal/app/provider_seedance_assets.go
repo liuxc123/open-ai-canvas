@@ -9,9 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -136,8 +134,6 @@ func (s *Service) prepareSeedanceAssetReferences(ctx context.Context, userID str
 	for index := range input.ReferenceAudios {
 		references = append(references, reference{media: &input.ReferenceAudios[index], index: index, referenceType: "音频"})
 	}
-	log.Printf("seedance asset: event=prepare_started task_id=%q user_id=%q channel_id=%q model=%q material_base_url=%q material_api_version=%q references=%d", taskExecutionID(ctx), userID, input.Config.ChannelID, safeProviderModel(input.Config.Model), seedanceMaterialLogEndpoint(seedanceMaterialBaseURL(input.Config), ""), seedanceMaterialAPIVersion(input.Config), len(references))
-
 	if taskID := taskExecutionID(ctx); taskID != "" && len(references) > 0 {
 		_ = s.repo.UpdateTaskProgress(taskID, "正在准备 Seedance 素材", 0)
 	}
@@ -146,29 +142,18 @@ func (s *Service) prepareSeedanceAssetReferences(ctx context.Context, userID str
 		mu       sync.Mutex
 		wg       sync.WaitGroup
 		jobs     = make(chan reference)
-		prepared int
-		skipped  int
 	)
 	worker := func() {
 		defer wg.Done()
 		for item := range jobs {
 			media := item.media
 			if strings.HasPrefix(strings.TrimSpace(media.URL), "asset://") {
-				log.Printf("seedance asset: event=reference_skipped task_id=%q type=%q index=%d name=%q reason=%q", taskExecutionID(ctx), item.referenceType, item.index+1, seedanceAssetLogName(media.Name), "already_asset_url")
-				mu.Lock()
-				skipped++
-				mu.Unlock()
 				continue
 			}
 			resourceID := seedanceAssetResourceID(*media)
 			if resourceID == "" {
-				log.Printf("seedance asset: event=reference_skipped task_id=%q type=%q index=%d name=%q reason=%q", taskExecutionID(ctx), item.referenceType, item.index+1, seedanceAssetLogName(media.Name), "not_owned_resource")
-				mu.Lock()
-				skipped++
-				mu.Unlock()
 				continue
 			}
-			log.Printf("seedance asset: event=reference_prepare_started task_id=%q resource_id=%q type=%q index=%d name=%q role=%q", taskExecutionID(ctx), resourceID, item.referenceType, item.index+1, seedanceAssetLogName(media.Name), truncateRunes(strings.TrimSpace(media.Role), 80))
 			asset, stage, err := s.ensureSeedanceAsset(ctx, userID, resourceID, input.Config)
 			if err != nil {
 				failure := SeedanceAssetPreparationFailure{
@@ -178,22 +163,16 @@ func (s *Service) prepareSeedanceAssetReferences(ctx context.Context, userID str
 				mu.Lock()
 				failures = append(failures, failure)
 				mu.Unlock()
-				log.Printf("seedance asset: event=reference_prepare_failed task_id=%q resource_id=%q type=%q index=%d stage=%q reason=%q error=%q", taskExecutionID(ctx), resourceID, item.referenceType, item.index+1, stage, failure.Reason, seedanceAssetLogError(err))
 				continue
 			}
 			if asset == nil || strings.TrimSpace(asset.UpstreamAssetID) == "" {
 				mu.Lock()
 				failures = append(failures, SeedanceAssetPreparationFailure{ResourceID: resourceID, ReferenceType: item.referenceType, ReferenceIndex: item.index, Role: media.Role, Name: media.Name, Stage: "get_asset", Reason: "upstream_asset_missing", Message: "上游素材 ID 缺失", Retryable: true})
 				mu.Unlock()
-				log.Printf("seedance asset: event=reference_prepare_failed task_id=%q resource_id=%q type=%q index=%d stage=%q reason=%q", taskExecutionID(ctx), resourceID, item.referenceType, item.index+1, "get_asset", "upstream_asset_missing")
 				continue
 			}
 			media.URL = "asset://" + asset.UpstreamAssetID
 			media.DataURL = ""
-			mu.Lock()
-			prepared++
-			mu.Unlock()
-			log.Printf("seedance asset: event=reference_prepared task_id=%q resource_id=%q binding_id=%q upstream_asset_id=%q status=%q", taskExecutionID(ctx), resourceID, asset.ID, asset.UpstreamAssetID, asset.Status)
 		}
 	}
 	workers := seedanceAssetPrepareConcurrency
@@ -210,10 +189,8 @@ func (s *Service) prepareSeedanceAssetReferences(ctx context.Context, userID str
 	close(jobs)
 	wg.Wait()
 	if len(failures) > 0 {
-		log.Printf("seedance asset: event=prepare_failed task_id=%q prepared=%d skipped=%d failures=%d", taskExecutionID(ctx), prepared, skipped, len(failures))
 		return &seedanceAssetPreparationError{Failures: failures}
 	}
-	log.Printf("seedance asset: event=prepare_completed task_id=%q prepared=%d skipped=%d", taskExecutionID(ctx), prepared, skipped)
 	if taskID := taskExecutionID(ctx); taskID != "" && len(references) > 0 {
 		_ = s.repo.UpdateTaskProgress(taskID, "作品创作中", 0)
 	}
@@ -243,16 +220,13 @@ func (s *Service) ensureSeedanceAsset(ctx context.Context, userID, resourceID st
 	if err != nil {
 		return nil, "read_resource", fmt.Errorf("计算素材内容标识失败：%w", err)
 	}
-	log.Printf("seedance asset: event=resource_loaded task_id=%q resource_id=%q name=%q kind=%q hash=%q", taskExecutionID(ctx), resource.ID, seedanceAssetLogName(seedanceAssetName(resource)), resource.Kind, resourceHash)
 	accountFingerprint := seedanceAccountFingerprint(config)
 	binding, err := s.repo.SeedanceAssetByIdentity(userID, resource.ID, accountFingerprint)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, "create_asset", err
 	}
 	if binding != nil {
-		log.Printf("seedance asset: event=binding_found task_id=%q resource_id=%q binding_id=%q status=%q upstream_asset_id=%q", taskExecutionID(ctx), resource.ID, binding.ID, binding.Status, binding.UpstreamAssetID)
 		if binding.ResourceHash != resourceHash {
-			log.Printf("seedance asset: event=binding_expired task_id=%q resource_id=%q binding_id=%q reason=%q", taskExecutionID(ctx), resource.ID, binding.ID, "resource_hash_changed")
 			binding.Status = "expired"
 			binding.ErrorResponse = "素材内容已变更，等待重新注册"
 			if err := s.repo.SaveSeedanceAsset(binding); err != nil {
@@ -261,22 +235,17 @@ func (s *Service) ensureSeedanceAsset(ctx context.Context, userID, resourceID st
 		}
 		switch binding.Status {
 		case "approved":
-			log.Printf("seedance asset: event=binding_reused task_id=%q resource_id=%q binding_id=%q upstream_asset_id=%q", taskExecutionID(ctx), resource.ID, binding.ID, binding.UpstreamAssetID)
 			return binding, "", nil
 		case "submitted", "processing":
-			log.Printf("seedance asset: event=binding_poll_resumed task_id=%q resource_id=%q binding_id=%q status=%q", taskExecutionID(ctx), resource.ID, binding.ID, binding.Status)
 			return s.waitForSeedanceAsset(ctx, binding, config)
 		case "submitting":
-			log.Printf("seedance asset: event=binding_registration_wait task_id=%q resource_id=%q binding_id=%q", taskExecutionID(ctx), resource.ID, binding.ID)
 			return s.waitForSeedanceRegistration(ctx, binding, config)
 		case "failed", "expired":
-			log.Printf("seedance asset: event=binding_retry_claim task_id=%q resource_id=%q binding_id=%q status=%q", taskExecutionID(ctx), resource.ID, binding.ID, binding.Status)
 			claimed, claimErr := s.repo.ClaimSeedanceAssetRetry(binding, time.Now())
 			if claimErr != nil {
 				return nil, "create_asset", claimErr
 			}
 			if !claimed {
-				log.Printf("seedance asset: event=binding_retry_wait task_id=%q resource_id=%q binding_id=%q", taskExecutionID(ctx), resource.ID, binding.ID)
 				binding, err = s.repo.SeedanceAssetByIdentity(userID, resource.ID, accountFingerprint)
 				if err != nil {
 					return nil, "create_asset", err
@@ -300,14 +269,12 @@ func (s *Service) ensureSeedanceAsset(ctx context.Context, userID, resourceID st
 			return nil, "create_asset", createErr
 		}
 		if !created {
-			log.Printf("seedance asset: event=binding_create_raced task_id=%q resource_id=%q binding_id=%q", taskExecutionID(ctx), resource.ID, binding.ID)
 			binding, err = s.repo.SeedanceAssetByIdentity(userID, resource.ID, accountFingerprint)
 			if err != nil {
 				return nil, "create_asset", err
 			}
 			return s.waitForSeedanceRegistration(ctx, binding, config)
 		}
-		log.Printf("seedance asset: event=binding_created task_id=%q resource_id=%q binding_id=%q sequence=%d material_api_version=%q", taskExecutionID(ctx), resource.ID, binding.ID, binding.Seq, binding.MaterialAPIVersion)
 	}
 
 	resourceURL, err := s.providerResourceURL(resource, time.Now().Add(seedanceAssetURLTTL))
@@ -328,16 +295,13 @@ func (s *Service) ensureSeedanceAsset(ctx context.Context, userID, resourceID st
 	if err := s.repo.SaveSeedanceAsset(binding); err != nil {
 		return nil, "create_asset", err
 	}
-	log.Printf("seedance asset: event=create_asset_request task_id=%q resource_id=%q binding_id=%q endpoint=%q media_assets_id=%d asset_type=%q", taskExecutionID(ctx), resource.ID, binding.ID, seedanceMaterialLogEndpoint(binding.MaterialBaseURL, "/api/material/create_asset"), binding.Seq, assetType)
 	reply, err := s.callSeedanceCreateAsset(ctx, config, seedanceCreateAssetRequest{
 		Name: seedanceAssetName(resource), AssetType: assetType, URL: resourceURL, GroupType: "AIGC",
 		MediaAssetsID: binding.Seq, ModelID: config.Model, ModelName: config.Model,
 	})
 	if err != nil {
-		log.Printf("seedance asset: event=create_asset_failed task_id=%q resource_id=%q binding_id=%q error=%q", taskExecutionID(ctx), resource.ID, binding.ID, seedanceAssetLogError(err))
 		return nil, "create_asset", s.failSeedanceAsset(binding, fmt.Errorf("调用 create_asset 失败：%w", err))
 	}
-	log.Printf("seedance asset: event=create_asset_response task_id=%q resource_id=%q binding_id=%q upstream_asset_id=%q status=%q error_code=%q error=%q", taskExecutionID(ctx), resource.ID, binding.ID, reply.UpstreamAssetID, reply.Status, reply.ErrorCode, seedanceAssetSafeMessage(reply.ErrorMessage))
 	if reply.UpstreamAssetID == "" {
 		return nil, "create_asset", s.failSeedanceAsset(binding, errors.New(firstNonEmptyString(reply.ErrorMessage, "上游没有返回素材 ID")))
 	}
@@ -354,11 +318,9 @@ func (s *Service) ensureSeedanceAsset(ctx context.Context, userID, resourceID st
 }
 
 func (s *Service) waitForSeedanceRegistration(ctx context.Context, binding *model.SeedanceAsset, config providerConfig) (*model.SeedanceAsset, string, error) {
-	log.Printf("seedance asset: event=registration_wait_started task_id=%q resource_id=%q binding_id=%q", taskExecutionID(ctx), binding.ResourceID, binding.ID)
 	deadline := time.Now().Add(seedanceCreateAssetTimeout)
 	for time.Now().Before(deadline) {
 		if binding.UpstreamAssetID != "" || binding.Status != "submitting" {
-			log.Printf("seedance asset: event=registration_wait_completed task_id=%q resource_id=%q binding_id=%q status=%q upstream_asset_id=%q", taskExecutionID(ctx), binding.ResourceID, binding.ID, binding.Status, binding.UpstreamAssetID)
 			return s.waitForSeedanceAsset(ctx, binding, config)
 		}
 		if err := sleepContext(ctx, 500*time.Millisecond); err != nil {
@@ -370,7 +332,6 @@ func (s *Service) waitForSeedanceRegistration(ctx context.Context, binding *mode
 		}
 		binding = latest
 	}
-	log.Printf("seedance asset: event=registration_wait_timed_out task_id=%q resource_id=%q binding_id=%q", taskExecutionID(ctx), binding.ResourceID, binding.ID)
 	return nil, "create_asset", errors.New("等待其他任务注册素材超时，请稍后重试")
 }
 
@@ -386,25 +347,18 @@ func (s *Service) waitForSeedanceAsset(ctx context.Context, binding *model.Seeda
 	}
 	deadline := time.Now().Add(seedanceAssetPollTimeout)
 	interval := seedanceAssetPollInitialInterval
-	poll := 0
-	log.Printf("seedance asset: event=poll_started task_id=%q resource_id=%q binding_id=%q upstream_asset_id=%q status=%q", taskExecutionID(ctx), binding.ResourceID, binding.ID, binding.UpstreamAssetID, binding.Status)
 	for time.Now().Before(deadline) {
 		switch binding.Status {
 		case "approved":
-			log.Printf("seedance asset: event=poll_completed task_id=%q resource_id=%q binding_id=%q upstream_asset_id=%q polls=%d", taskExecutionID(ctx), binding.ResourceID, binding.ID, binding.UpstreamAssetID, poll)
 			return binding, "", nil
 		case "failed", "expired":
-			log.Printf("seedance asset: event=poll_failed task_id=%q resource_id=%q binding_id=%q status=%q error=%q", taskExecutionID(ctx), binding.ResourceID, binding.ID, binding.Status, seedanceAssetSafeMessage(binding.ErrorResponse))
 			return nil, "get_asset", errors.New(firstNonEmptyString(binding.ErrorResponse, "上游素材不可用"))
 		}
 		if format := strings.TrimSpace(binding.MaterialAPIFormat); format != "" && format != seedanceMaterialAPIFormat {
 			return nil, "get_asset", fmt.Errorf("不支持的 Seedance 素材协议格式：%s", format)
 		}
-		poll++
-		log.Printf("seedance asset: event=get_asset_request task_id=%q resource_id=%q binding_id=%q upstream_asset_id=%q poll=%d endpoint=%q", taskExecutionID(ctx), binding.ResourceID, binding.ID, binding.UpstreamAssetID, poll, seedanceMaterialLogEndpoint(binding.MaterialBaseURL, "/api/material/get_asset"))
 		reply, err := s.callSeedanceGetAsset(ctx, config, binding.MaterialBaseURL, binding.UpstreamAssetID)
 		if err != nil {
-			log.Printf("seedance asset: event=get_asset_failed task_id=%q resource_id=%q binding_id=%q poll=%d error=%q", taskExecutionID(ctx), binding.ResourceID, binding.ID, poll, seedanceAssetLogError(err))
 			var httpErr providerHTTPError
 			if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
 				binding.Status = "expired"
@@ -415,7 +369,6 @@ func (s *Service) waitForSeedanceAsset(ctx context.Context, binding *model.Seeda
 		}
 		binding.Status = reply.Status
 		binding.ErrorResponse = reply.ErrorMessage
-		log.Printf("seedance asset: event=get_asset_response task_id=%q resource_id=%q binding_id=%q upstream_asset_id=%q poll=%d status=%q error_code=%q error=%q", taskExecutionID(ctx), binding.ResourceID, binding.ID, binding.UpstreamAssetID, poll, reply.Status, reply.ErrorCode, seedanceAssetSafeMessage(reply.ErrorMessage))
 		if reply.Status == "approved" {
 			now := time.Now()
 			binding.ApprovedAt = &now
@@ -425,11 +378,9 @@ func (s *Service) waitForSeedanceAsset(ctx context.Context, binding *model.Seeda
 			return nil, "get_asset", err
 		}
 		if binding.Status == "approved" {
-			log.Printf("seedance asset: event=poll_completed task_id=%q resource_id=%q binding_id=%q upstream_asset_id=%q polls=%d", taskExecutionID(ctx), binding.ResourceID, binding.ID, binding.UpstreamAssetID, poll)
 			return binding, "", nil
 		}
 		if binding.Status == "failed" {
-			log.Printf("seedance asset: event=poll_failed task_id=%q resource_id=%q binding_id=%q status=%q error=%q", taskExecutionID(ctx), binding.ResourceID, binding.ID, binding.Status, seedanceAssetSafeMessage(binding.ErrorResponse))
 			return nil, "get_asset", errors.New(firstNonEmptyString(binding.ErrorResponse, "上游素材审核失败"))
 		}
 		if err := sleepContext(ctx, interval); err != nil {
@@ -442,7 +393,6 @@ func (s *Service) waitForSeedanceAsset(ctx context.Context, binding *model.Seeda
 	binding.Status = "expired"
 	binding.ErrorResponse = "等待上游素材可用超时"
 	_ = s.repo.SaveSeedanceAsset(binding)
-	log.Printf("seedance asset: event=poll_timed_out task_id=%q resource_id=%q binding_id=%q upstream_asset_id=%q polls=%d", taskExecutionID(ctx), binding.ResourceID, binding.ID, binding.UpstreamAssetID, poll)
 	return nil, "timeout", errors.New(binding.ErrorResponse)
 }
 
@@ -622,29 +572,6 @@ func seedanceAssetSafeMessage(value string) string {
 		return ""
 	}
 	return truncateRunes(providerPayloadErrorMessage(value), 500)
-}
-
-func seedanceMaterialLogEndpoint(baseURL string, requestPath string) string {
-	endpoint := strings.TrimRight(strings.TrimSpace(baseURL), "/") + requestPath
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "invalid"
-	}
-	parsed.User = nil
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return truncateRunes(parsed.String(), 500)
-}
-
-func seedanceAssetLogName(value string) string {
-	return truncateRunes(strings.TrimSpace(value), 240)
-}
-
-func seedanceAssetLogError(err error) string {
-	if err == nil {
-		return ""
-	}
-	return redactDiagnosticText(safeProviderLogError(err), 500)
 }
 
 func seedanceAssetFailureReason(err error) string {

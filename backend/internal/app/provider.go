@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -256,12 +255,6 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		if err := validateVideoTask(input.VideoCapability, input); err != nil {
 			return nil, err
 		}
-	}
-	if input.Mode == "video" && isSeedanceAssetVideoConfig(input.Config) {
-		// Temporary integration-test guard: asset registration has completed, but
-		// the paid upstream video request must not be sent.
-		log.Printf("seedance asset: event=video_generation_intercepted task_id=%q user_id=%q channel_id=%q model=%q images=%d videos=%d audios=%d", taskExecutionID(ctx), userID, input.Config.ChannelID, safeProviderModel(input.Config.Model), len(input.ReferenceImages), len(input.ReferenceVideos), len(input.ReferenceAudios))
-		return nil, errors.New("Seedance 视频生成已被测试拦截：素材注册流程完成，未发起上游视频生成请求")
 	}
 	switch input.Mode {
 	case "image":
