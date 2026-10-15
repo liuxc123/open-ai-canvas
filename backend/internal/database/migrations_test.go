@@ -109,6 +109,9 @@ func TestMigrateSchemaNormalizesLegacyWorkbenchMigrationV51(t *testing.T) {
 	if err := db.Where("version IN ?", []int64{51, 52, 53}).Delete(&schemaMigration{}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Where("version > ?", workbenchToolsMigrationVersion).Delete(&schemaMigration{}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Model(&schemaMigration{}).Where("version = ?", 54).Updates(map[string]any{
 		"version":  51,
 		"name":     workbenchToolsMigrationName,

@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 54
+const CurrentSchemaVersion int64 = 57
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -183,6 +183,21 @@ var schemaMigrations = []migration{
 	}},
 	{version: 54, name: workbenchToolsMigrationName, checksum: workbenchToolsMigrationChecksum, apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.WorkbenchTool{}, &model.WorkbenchPreset{}, &model.Task{})
+	}},
+	{version: 55, name: "seedance_assets", checksum: "sha256:seedance-assets-v55-20261015", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.SeedanceAsset{})
+	}},
+	{version: 56, name: "channel_material_base_url", checksum: "sha256:channel-material-base-url-v56-20261015", apply: func(tx *gorm.DB) error {
+		if tx.Migrator().HasColumn(&model.ModelChannel{}, "MaterialBaseURL") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.ModelChannel{}, "MaterialBaseURL")
+	}},
+	{version: 57, name: "channel_material_api_version", checksum: "sha256:channel-material-api-version-v57-20261015", apply: func(tx *gorm.DB) error {
+		if tx.Migrator().HasColumn(&model.ModelChannel{}, "MaterialAPIVersion") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.ModelChannel{}, "MaterialAPIVersion")
 	}},
 }
 

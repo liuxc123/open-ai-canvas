@@ -483,6 +483,9 @@ func (r *Repository) DeleteAssetsAndResources(userID string, assetIDs []string, 
 		if err := tx.Where("resource_id IN ?", resourceIDs).Delete(&model.ArkPrivateAssetBinding{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("resource_id IN ?", resourceIDs).Delete(&model.SeedanceAsset{}).Error; err != nil {
+			return err
+		}
 		return tx.Where("user_id = ? AND id IN ?", userID, resourceIDs).Delete(&model.Resource{}).Error
 	})
 }

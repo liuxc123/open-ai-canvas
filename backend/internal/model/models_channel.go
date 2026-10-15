@@ -13,13 +13,15 @@ type ModelChannel struct {
 	Enabled bool         `json:"enabled" gorm:"index"`
 	Name    string       `json:"name" gorm:"size:80"`
 	// PublicAlias 仅保留历史列供旧迁移读取，运行时不再使用渠道级前台名称。
-	PublicAlias      string `json:"-" gorm:"size:80;not null;default:''"`
-	SortOrder        int    `json:"sortOrder" gorm:"not null;default:0"`
-	BaseURL          string `json:"baseUrl"`
-	APIKey           string `json:"-"`
-	SecretKey        string `json:"-"`
-	APIFormat        string `json:"apiFormat" gorm:"size:24"`
-	ConcurrencyLimit int    `json:"concurrencyLimit"`
+	PublicAlias        string `json:"-" gorm:"size:80;not null;default:''"`
+	SortOrder          int    `json:"sortOrder" gorm:"not null;default:0"`
+	BaseURL            string `json:"baseUrl"`
+	MaterialBaseURL    string `json:"materialBaseUrl" gorm:"size:500"`
+	MaterialAPIVersion string `json:"materialApiVersion" gorm:"size:24"`
+	APIKey             string `json:"-"`
+	SecretKey          string `json:"-"`
+	APIFormat          string `json:"apiFormat" gorm:"size:24"`
+	ConcurrencyLimit   int    `json:"concurrencyLimit"`
 	// ProxyURL 是渠道级出站代理地址，支持 socks5://、socks5h://、http://、https://。
 	// 留空时使用全局环境变量代理。
 	ProxyURL   string `json:"proxyUrl" gorm:"size:512"`

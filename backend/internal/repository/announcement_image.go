@@ -84,6 +84,9 @@ func (r *Repository) UpdateAnnouncementWithImage(announcement *model.Announcemen
 		if err := tx.Where("resource_id = ?", oldResource.ID).Delete(&model.ArkPrivateAssetBinding{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("resource_id = ?", oldResource.ID).Delete(&model.SeedanceAsset{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("resource_id = ?", oldResource.ID).Delete(&model.AnnouncementImageDraft{}).Error; err != nil {
 			return err
 		}
@@ -118,6 +121,9 @@ func (r *Repository) DiscardAnnouncementImageDraft(userID string, resource *mode
 			return ErrAnnouncementImageReferenced
 		}
 		if err := tx.Where("resource_id = ?", resource.ID).Delete(&model.ArkPrivateAssetBinding{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("resource_id = ?", resource.ID).Delete(&model.SeedanceAsset{}).Error; err != nil {
 			return err
 		}
 		deleted := tx.Where("id = ? AND user_id = ?", resource.ID, userID).Delete(&model.Resource{})

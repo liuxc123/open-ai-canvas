@@ -89,6 +89,9 @@ func (r *Repository) DeleteSystemChannel(id string) error {
 		if err := tx.Where("channel_id = ?", id).Delete(&model.ChannelModel{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("channel_id = ?", id).Delete(&model.SeedanceAsset{}).Error; err != nil {
+			return err
+		}
 		return tx.Where("id = ? AND scope = ?", id, model.ChannelScopeSystem).Delete(&model.ModelChannel{}).Error
 	})
 }
@@ -164,6 +167,45 @@ func (r *Repository) CreateArkPrivateAssetBinding(binding *model.ArkPrivateAsset
 
 func (r *Repository) SaveArkPrivateAssetBinding(binding *model.ArkPrivateAssetBinding) error {
 	return r.db.Save(binding).Error
+}
+
+func (r *Repository) SeedanceAssetByIdentity(userID, resourceID, accountFingerprint string) (*model.SeedanceAsset, error) {
+	var asset model.SeedanceAsset
+	err := r.db.Where("user_id = ? AND resource_id = ? AND account_fingerprint = ?", userID, resourceID, accountFingerprint).First(&asset).Error
+	if err != nil {
+		return nil, err
+	}
+	return &asset, nil
+}
+
+// CreateSeedanceAsset elects one worker to register a resource with NewAPI.
+// Other workers observe the same row and wait for its upstream asset ID.
+func (r *Repository) CreateSeedanceAsset(asset *model.SeedanceAsset) (bool, error) {
+	result := r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}, {Name: "resource_id"}, {Name: "account_fingerprint"}},
+		DoNothing: true,
+	}).Create(asset)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
+func (r *Repository) SaveSeedanceAsset(asset *model.SeedanceAsset) error {
+	return r.db.Save(asset).Error
+}
+
+// ClaimSeedanceAssetRetry moves one terminal binding back to submitting. The
+// conditional update makes the retry uploader election safe across workers.
+func (r *Repository) ClaimSeedanceAssetRetry(asset *model.SeedanceAsset, now time.Time) (bool, error) {
+	result := r.db.Model(&model.SeedanceAsset{}).
+		Where("user_id = ? AND resource_id = ? AND account_fingerprint = ?", asset.UserID, asset.ResourceID, asset.AccountFingerprint).
+		Where("status IN ?", []string{"failed", "expired"}).
+		Updates(map[string]any{"upstream_asset_id": "", "status": "submitting", "error_response": "", "approved_at": nil, "updated_at": now})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 func (r *Repository) DeleteSystemSetting(key string) error {

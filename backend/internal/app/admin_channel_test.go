@@ -19,13 +19,17 @@ import (
 )
 
 func TestChannelFromRequestStoresConnectionWithoutDefaultProtocol(t *testing.T) {
+	materialBaseURL := "https://8.8.8.8"
+	materialAPIVersion := "reset-20261015"
 	channel, err := channelFromRequest(ChannelRequest{
-		Name:             "混合模型渠道",
-		BaseURL:          "https://8.8.8.8/v1",
-		APIKey:           "access-key",
-		SecretKey:        "secret-key",
-		ConcurrencyLimit: intPtr(6),
-		Models:           []string{"seedance-2.0"},
+		Name:               "混合模型渠道",
+		BaseURL:            "https://8.8.8.8/v1",
+		MaterialBaseURL:    &materialBaseURL,
+		MaterialAPIVersion: &materialAPIVersion,
+		APIKey:             "access-key",
+		SecretKey:          "secret-key",
+		ConcurrencyLimit:   intPtr(6),
+		Models:             []string{"seedance-2.0"},
 	}, model.ModelChannel{})
 	if err != nil {
 		t.Fatalf("channelFromRequest() error = %v", err)
@@ -38,6 +42,12 @@ func TestChannelFromRequestStoresConnectionWithoutDefaultProtocol(t *testing.T) 
 	}
 	if channel.APIKey != "access-key" || channel.SecretKey != "secret-key" {
 		t.Fatal("channel credentials were not stored")
+	}
+	if channel.MaterialBaseURL != materialBaseURL {
+		t.Fatalf("MaterialBaseURL = %q, want %q", channel.MaterialBaseURL, materialBaseURL)
+	}
+	if channel.MaterialAPIVersion != materialAPIVersion {
+		t.Fatalf("MaterialAPIVersion = %q, want %q", channel.MaterialAPIVersion, materialAPIVersion)
 	}
 }
 

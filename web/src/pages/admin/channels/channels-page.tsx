@@ -20,6 +20,8 @@ import { Select } from "@/components/ui/base/select";
 type ChannelFormValues = {
     name: string;
     baseUrl: string;
+    materialBaseUrl?: string;
+    materialApiVersion?: string;
     apiKey?: string;
     secretKey?: string;
     headers?: ChannelHeader[];
@@ -33,6 +35,8 @@ export function adminChannelSavePayload(values: ChannelFormValues) {
     return {
         name: values.name.trim(),
         baseUrl: values.baseUrl.trim(),
+        materialBaseUrl: values.materialBaseUrl?.trim().replace(/\/+$/u, "") || "",
+        materialApiVersion: values.materialApiVersion?.trim() || "v1",
         apiKey: values.apiKey?.trim() || "",
         secretKey: values.secretKey?.trim() || "",
         headers: values.headers || [],
@@ -126,6 +130,8 @@ export default function ChannelsPage() {
                 ? {
                       name: channel.name,
                       baseUrl: channel.baseUrl,
+                      materialBaseUrl: channel.materialBaseUrl || "",
+                      materialApiVersion: channel.materialApiVersion || "v1",
                       apiKey: "",
                       secretKey: "",
                       headers: channel.headers || [],
@@ -134,7 +140,7 @@ export default function ChannelsPage() {
                       enabled: channel.enabled !== false,
                       proxyUrl: channel.proxyUrl || "",
                   }
-                : { name: "", baseUrl: "", apiKey: "", secretKey: "", headers: [], useGlobalConcurrency: true, concurrencyLimit: undefined, enabled: true, proxyUrl: "" },
+                : { name: "", baseUrl: "", materialBaseUrl: "", materialApiVersion: "v1", apiKey: "", secretKey: "", headers: [], useGlobalConcurrency: true, concurrencyLimit: undefined, enabled: true, proxyUrl: "" },
         );
         setDrawerOpen(true);
     };
@@ -380,6 +386,12 @@ export default function ChannelsPage() {
                     </Form.Item>
                     <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true, message: "请填写 Base URL" }]}>
                         <Input placeholder="填写云端渠道 Base URL" />
+                    </Form.Item>
+                    <Form.Item name="materialBaseUrl" label="素材服务 Base URL（可选）" extra="仅 Seedance 素材注册使用。填写可直接拼接 /api/material/create_asset 的服务根地址；留空时从视频 Base URL 去除末尾 /v1 推导。">
+                        <Input inputMode="url" placeholder="例如：https://newapi.example.com" />
+                    </Form.Item>
+                    <Form.Item name="materialApiVersion" label="素材 API 版本 / 重置标识" extra="默认 v1。修改后不会复用此前的素材注册记录，可用于上游素材服务变更或强制重新注册。">
+                        <Input maxLength={24} placeholder="例如：v1 或 reset-20261015" />
                     </Form.Item>
                     <Form.Item
                         name="apiKey"

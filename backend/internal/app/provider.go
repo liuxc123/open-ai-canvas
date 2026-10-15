@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -69,6 +70,8 @@ type providerConfig struct {
 	APIFormat             string                 `json:"apiFormat"`
 	InterfaceType         string                 `json:"interfaceType"`
 	BaseURL               string                 `json:"baseUrl"`
+	MaterialBaseURL       string                 `json:"materialBaseUrl"`
+	MaterialAPIVersion    string                 `json:"materialApiVersion"`
 	APIKey                string                 `json:"apiKey"`
 	SecretKey             string                 `json:"secretKey"`
 	Headers               []OutboundHeader       `json:"headers"`
@@ -245,11 +248,20 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		if err := s.prepareArkPrivateAssetReferences(ctx, userID, &input); err != nil {
 			return nil, err
 		}
+		if err := s.prepareSeedanceAssetReferences(ctx, userID, &input); err != nil {
+			return nil, err
+		}
 	}
 	if input.Mode == "video" && input.VideoCapability != nil {
 		if err := validateVideoTask(input.VideoCapability, input); err != nil {
 			return nil, err
 		}
+	}
+	if input.Mode == "video" && isSeedanceAssetVideoConfig(input.Config) {
+		// Temporary integration-test guard: asset registration has completed, but
+		// the paid upstream video request must not be sent.
+		log.Printf("seedance asset: event=video_generation_intercepted task_id=%q user_id=%q channel_id=%q model=%q images=%d videos=%d audios=%d", taskExecutionID(ctx), userID, input.Config.ChannelID, safeProviderModel(input.Config.Model), len(input.ReferenceImages), len(input.ReferenceVideos), len(input.ReferenceAudios))
+		return nil, errors.New("Seedance 视频生成已被测试拦截：素材注册流程完成，未发起上游视频生成请求")
 	}
 	switch input.Mode {
 	case "image":
@@ -400,6 +412,8 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	config.InterfaceType = string(channelModel.Protocol)
 	config.APIFormat = channelAPIFormatForProtocol(channel.APIFormat, channelModel.Protocol)
 	config.BaseURL = channel.BaseURL
+	config.MaterialBaseURL = channel.MaterialBaseURL
+	config.MaterialAPIVersion = channel.MaterialAPIVersion
 	config.APIKey = channel.APIKey
 	config.SecretKey = channel.SecretKey
 	config.Headers, err = ParseOutboundHeadersJSON(channel.HeadersJSON)

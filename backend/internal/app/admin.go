@@ -86,6 +86,8 @@ type ChannelRequest struct {
 	Name                 string           `json:"name"`
 	SortOrder            *int             `json:"sortOrder"`
 	BaseURL              string           `json:"baseUrl"`
+	MaterialBaseURL      *string          `json:"materialBaseUrl"`
+	MaterialAPIVersion   *string          `json:"materialApiVersion"`
 	APIKey               string           `json:"apiKey"`
 	SecretKey            string           `json:"secretKey"`
 	ConcurrencyLimit     *int             `json:"concurrencyLimit"`
@@ -97,24 +99,26 @@ type ChannelRequest struct {
 }
 
 type PublicModelChannel struct {
-	ID               string                    `json:"id"`
-	UserID           string                    `json:"userId"`
-	Scope            model.ChannelScope        `json:"scope"`
-	Enabled          bool                      `json:"enabled"`
-	Name             string                    `json:"name"`
-	SortOrder        int                       `json:"sortOrder"`
-	BaseURL          string                    `json:"baseUrl"`
-	APIKey           string                    `json:"apiKey"`
-	APIFormat        string                    `json:"apiFormat"`
-	ConcurrencyLimit int                       `json:"concurrencyLimit"`
-	ProxyURL         string                    `json:"proxyUrl"`
-	Models           []string                  `json:"models"`
-	ModelCosts       []PublicChannelModelPrice `json:"modelCosts"`
-	Headers          []OutboundHeader          `json:"headers,omitempty"`
-	HasAPIKey        bool                      `json:"hasApiKey"`
-	HasSecretKey     bool                      `json:"hasSecretKey"`
-	CreatedAt        time.Time                 `json:"createdAt"`
-	UpdatedAt        time.Time                 `json:"updatedAt"`
+	ID                 string                    `json:"id"`
+	UserID             string                    `json:"userId"`
+	Scope              model.ChannelScope        `json:"scope"`
+	Enabled            bool                      `json:"enabled"`
+	Name               string                    `json:"name"`
+	SortOrder          int                       `json:"sortOrder"`
+	BaseURL            string                    `json:"baseUrl"`
+	MaterialBaseURL    string                    `json:"materialBaseUrl,omitempty"`
+	MaterialAPIVersion string                    `json:"materialApiVersion,omitempty"`
+	APIKey             string                    `json:"apiKey"`
+	APIFormat          string                    `json:"apiFormat"`
+	ConcurrencyLimit   int                       `json:"concurrencyLimit"`
+	ProxyURL           string                    `json:"proxyUrl"`
+	Models             []string                  `json:"models"`
+	ModelCosts         []PublicChannelModelPrice `json:"modelCosts"`
+	Headers            []OutboundHeader          `json:"headers,omitempty"`
+	HasAPIKey          bool                      `json:"hasApiKey"`
+	HasSecretKey       bool                      `json:"hasSecretKey"`
+	CreatedAt          time.Time                 `json:"createdAt"`
+	UpdatedAt          time.Time                 `json:"updatedAt"`
 }
 
 type PublicChannelModelPrice struct {
@@ -169,6 +173,22 @@ func (s *Service) channelFromRequest(req ChannelRequest, channel model.ModelChan
 		channel.SortOrder = *req.SortOrder
 	}
 	channel.BaseURL = strings.TrimRight(baseURL, "/")
+	if req.MaterialBaseURL != nil {
+		materialBaseURL := strings.TrimRight(strings.TrimSpace(*req.MaterialBaseURL), "/")
+		if materialBaseURL != "" && materialBaseURL != channel.MaterialBaseURL {
+			if _, err := ValidateOutboundURL(materialBaseURL); err != nil {
+				return channel, err
+			}
+		}
+		channel.MaterialBaseURL = materialBaseURL
+	}
+	if req.MaterialAPIVersion != nil {
+		materialAPIVersion := strings.TrimSpace(*req.MaterialAPIVersion)
+		if len(materialAPIVersion) > 24 {
+			return channel, BadAuthRequest("素材 API 版本不能超过 24 个字符")
+		}
+		channel.MaterialAPIVersion = materialAPIVersion
+	}
 	if req.APIKey != "" {
 		channel.APIKey = req.APIKey
 	}
@@ -242,6 +262,8 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 	}
 	apiKey := ""
 	baseURL := channel.BaseURL
+	materialBaseURL := ""
+	materialAPIVersion := ""
 	proxyURL := ""
 	var headers []OutboundHeader
 	if channel.Scope == model.ChannelScopeSystem {
@@ -257,26 +279,30 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 	}
 	if admin {
 		proxyURL = channel.ProxyURL
+		materialBaseURL = channel.MaterialBaseURL
+		materialAPIVersion = channel.MaterialAPIVersion
 	}
 	return PublicModelChannel{
-		ID:               channel.ID,
-		UserID:           channel.UserID,
-		Scope:            channel.Scope,
-		Enabled:          channel.Enabled,
-		Name:             channel.Name,
-		SortOrder:        channel.SortOrder,
-		BaseURL:          baseURL,
-		APIKey:           apiKey,
-		APIFormat:        channel.APIFormat,
-		ConcurrencyLimit: channel.ConcurrencyLimit,
-		ProxyURL:         proxyURL,
-		Models:           models,
-		ModelCosts:       modelCosts,
-		Headers:          headers,
-		HasAPIKey:        strings.TrimSpace(channel.APIKey) != "",
-		HasSecretKey:     strings.TrimSpace(channel.SecretKey) != "",
-		CreatedAt:        channel.CreatedAt,
-		UpdatedAt:        channel.UpdatedAt,
+		ID:                 channel.ID,
+		UserID:             channel.UserID,
+		Scope:              channel.Scope,
+		Enabled:            channel.Enabled,
+		Name:               channel.Name,
+		SortOrder:          channel.SortOrder,
+		BaseURL:            baseURL,
+		MaterialBaseURL:    materialBaseURL,
+		MaterialAPIVersion: materialAPIVersion,
+		APIKey:             apiKey,
+		APIFormat:          channel.APIFormat,
+		ConcurrencyLimit:   channel.ConcurrencyLimit,
+		ProxyURL:           proxyURL,
+		Models:             models,
+		ModelCosts:         modelCosts,
+		Headers:            headers,
+		HasAPIKey:          strings.TrimSpace(channel.APIKey) != "",
+		HasSecretKey:       strings.TrimSpace(channel.SecretKey) != "",
+		CreatedAt:          channel.CreatedAt,
+		UpdatedAt:          channel.UpdatedAt,
 	}
 }
 
